@@ -1,0 +1,12 @@
+# Build outputs
+/dist/
+**/build/
+.gradle/
+local.properties
+*.jks
+*.idsig
+.cxx/
+# OS/IDE
+.DS_Store
+.idea/
+*.iml
