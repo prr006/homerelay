@@ -3,7 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val releaseStorePath: String? = System.getenv("HOMERELAY_RELEASE_STORE_FILE")
+val releaseStorePath: String? = System.getenv("HOMERELAY_RELEASE_STORE_FILE")?.takeIf { it.isNotBlank() }
+val releaseStorePassword: String? = System.getenv("HOMERELAY_RELEASE_STORE_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseKeyAlias: String? = System.getenv("HOMERELAY_RELEASE_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+val releaseKeyPassword: String? = System.getenv("HOMERELAY_RELEASE_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+val releaseSigningAvailable = releaseStorePath != null && releaseStorePassword != null &&
+    releaseKeyAlias != null && releaseKeyPassword != null
 
 android {
     namespace = "com.homerelay.app"
@@ -23,12 +28,12 @@ android {
         //   HOMERELAY_RELEASE_STORE_FILE, HOMERELAY_RELEASE_STORE_PASSWORD,
         //   HOMERELAY_RELEASE_KEY_ALIAS, HOMERELAY_RELEASE_KEY_PASSWORD
         // or through -Pandroid.injected.signing.* in a local (untracked) setup.
-        if (releaseStorePath != null) {
+        if (releaseSigningAvailable) {
             create("release") {
-                storeFile = file(releaseStorePath)
-                storePassword = System.getenv("HOMERELAY_RELEASE_STORE_PASSWORD")
-                keyAlias = System.getenv("HOMERELAY_RELEASE_KEY_ALIAS")
-                keyPassword = System.getenv("HOMERELAY_RELEASE_KEY_PASSWORD")
+                storeFile = file(releaseStorePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
             }
         }
     }
@@ -42,7 +47,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (releaseStorePath != null) {
+            if (releaseSigningAvailable) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
