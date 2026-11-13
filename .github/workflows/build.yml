@@ -24,10 +24,24 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK platform
-        uses: android-actions/setup-android@v3
-      - name: Install platform android-36
-        run: sdkmanager "platforms;android-36" > /dev/null
+      - name: Ensure Android SDK platform
+        run: |
+          set -e
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset}"
+          ls "${ANDROID_HOME:-/opt/android-sdk}"/platforms 2>/dev/null || true
+          SDKMANAGER=""
+          for p in "${ANDROID_HOME}"/cmdline-tools/latest/bin/sdkmanager "${ANDROID_HOME}"/cmdline-tools/bin/sdkmanager; do
+            if [ -x "$p" ]; then SDKMANAGER="$p"; break; fi
+          done
+          if ! ls "${ANDROID_HOME}"/platforms/android-*/android.jar >/dev/null 2>&1; then
+            if [ -n "$SDKMANAGER" ]; then
+              yes | "$SDKMANAGER" --licenses >/dev/null || true
+              "$SDKMANAGER" "platforms;android-36"
+            else
+              echo "::error::no android.jar available and sdkmanager not found"
+              exit 1
+            fi
+          fi
       - name: Run framework-free test suite
         run: ./tools/run-tests.sh
 
@@ -42,11 +56,24 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install platform and build tools
+      - name: Ensure Android SDK platform 36
         run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          set -e
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset}"
+          ls "${ANDROID_HOME}"/platforms 2>/dev/null || true
+          SDKMANAGER=""
+          for p in "${ANDROID_HOME}"/cmdline-tools/latest/bin/sdkmanager "${ANDROID_HOME}"/cmdline-tools/bin/sdkmanager; do
+            if [ -x "$p" ]; then SDKMANAGER="$p"; break; fi
+          done
+          if ! ls "${ANDROID_HOME}"/platforms/android-36/android.jar >/dev/null 2>&1; then
+            if [ -n "$SDKMANAGER" ]; then
+              yes | "$SDKMANAGER" --licenses >/dev/null || true
+              "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+            else
+              echo "::error::android-36 missing and sdkmanager not found"
+              exit 1
+            fi
+          fi
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
       - name: Assemble debug APK
@@ -100,5 +127,5 @@ jobs:
             and cannot be installed directly. See BUILDING.md for how to build a signed release
             APK with your own keystore.
 
-            No M01/M36 hardware test results are claimed for this build; see TESTING notes in
-            the repository README. Verify on your own device and report findings.
+            No M01/M36 hardware test results are claimed for this build; see the README.
+            Verify on your own device and report findings.
