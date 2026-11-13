@@ -81,22 +81,22 @@ jobs:
           fi
       - name: Gradle wrapper sanity
         run: |
-          mkdir -p out
+          mkdir -p logs
           java -version
-          ./gradlew --version > out/gradle-version.log 2>&1 || true
-          tail -n 30 out/gradle-version.log || true
-          grep -E "Exception|Error|error|FAIL|denied|not found|mismatch|Could not|corrupt|invalid" out/gradle-version.log | tail -n 3 | while IFS= read -r line; do echo "::error::$line"; done
-          grep -q "Gradle " out/gradle-version.log
+          ./gradlew --version > logs/gradle-version.log 2>&1 || true
+          tail -n 30 logs/gradle-version.log || true
+          grep -E "Exception|Error|error|FAIL|denied|not found|mismatch|Could not|corrupt|invalid" logs/gradle-version.log | tail -n 3 | while IFS= read -r line; do echo "::error::$line"; done
+          grep -q "Gradle " logs/gradle-version.log
       - name: Configure projects
         run: |
-          mkdir -p out
+          mkdir -p logs
           set +e
-          ./gradlew --no-daemon --console=plain help > out/gradle-help.log 2>&1
+          ./gradlew --no-daemon --console=plain help > logs/gradle-help.log 2>&1
           code=$?
           set -e
-          tail -n 80 out/gradle-help.log
+          tail -n 80 logs/gradle-help.log
           if [ $code -ne 0 ]; then
-            python3 tools/ci-issue-comment.py gradle-help.log configure out/gradle-help.log
+            python3 tools/ci-issue-comment.py gradle-help.log configure logs/gradle-help.log
             exit $code
           fi
         env:
@@ -105,14 +105,14 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
       - name: Assemble debug APK
         run: |
-          mkdir -p out
+          mkdir -p logs
           set +e
-          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug > out/gradle-debug.log 2>&1
+          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug > logs/gradle-debug.log 2>&1
           code=$?
           set -e
-          tail -n 150 out/gradle-debug.log
+          tail -n 150 logs/gradle-debug.log
           if [ $code -ne 0 ]; then
-            python3 tools/ci-issue-comment.py gradle-debug.log assembleDebug out/gradle-debug.log
+            python3 tools/ci-issue-comment.py gradle-debug.log assembleDebug logs/gradle-debug.log
             exit $code
           fi
         env:
@@ -121,14 +121,14 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
       - name: Assemble release APK (unsigned unless release env secrets are set)
         run: |
-          mkdir -p out
+          mkdir -p logs
           set +e
-          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleRelease > out/gradle-release.log 2>&1
+          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleRelease > logs/gradle-release.log 2>&1
           code=$?
           set -e
-          tail -n 150 out/gradle-release.log
+          tail -n 150 logs/gradle-release.log
           if [ $code -ne 0 ]; then
-            python3 tools/ci-issue-comment.py gradle-release.log assembleRelease out/gradle-release.log
+            python3 tools/ci-issue-comment.py gradle-release.log assembleRelease logs/gradle-release.log
             exit $code
           fi
         env:
