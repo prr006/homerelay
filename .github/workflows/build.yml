@@ -77,14 +77,33 @@ jobs:
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
+        run: |
+          set -o pipefail
+          mkdir -p out
+          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug 2>&1 | tee out/gradle-debug.log
+      - name: Upload debug build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-debug-log
+          path: out/gradle-debug.log
+          if-no-files-found: ignore
       - name: Assemble release APK (unsigned unless release env secrets are set)
-        run: ./gradlew --no-daemon --stacktrace :app:assembleRelease
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --console=plain --stacktrace :app:assembleRelease 2>&1 | tee out/gradle-release.log
         env:
           HOMERELAY_RELEASE_STORE_FILE: ${{ secrets.HOMERELAY_RELEASE_STORE_FILE }}
           HOMERELAY_RELEASE_STORE_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_STORE_PASSWORD }}
           HOMERELAY_RELEASE_KEY_ALIAS: ${{ secrets.HOMERELAY_RELEASE_KEY_ALIAS }}
           HOMERELAY_RELEASE_KEY_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_KEY_PASSWORD }}
+      - name: Upload release build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-release-log
+          path: out/gradle-release.log
+          if-no-files-found: ignore
       - name: Collect artifacts
         run: |
           mkdir -p out
