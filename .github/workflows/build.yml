@@ -50,7 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: jvm-tests
     permissions:
-      contents: write
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 17
@@ -103,16 +104,13 @@ jobs:
           code=$?
           tail -n 150 out/gradle-debug.log
           if [ $code -ne 0 ]; then
-            tail -n 10 out/gradle-debug.log | while IFS= read -r line; do echo "::error::$line"; done
-            git config user.name "homerelay-ci"
-            git config user.email "ci@homerelay.local"
-            git fetch origin ci/last-failure || true
-            git checkout -B ci/last-failure
-            mkdir -p ci-logs
-            cp out/gradle-debug.log "ci-logs/gradle-debug-${GITHUB_SHA}.log"
-            git add ci-logs/
-            git commit -q -m "ci: debug build log for ${GITHUB_SHA}" || true
-            git push -f origin ci/last-failure || true
+            {
+              echo "## assembleDebug failure on commit ${GITHUB_SHA}"
+              echo '```'
+              tail -c 52000 out/gradle-debug.log
+              echo '```'
+            } > /tmp/debug-comment.md
+            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh issue comment 1 --repo "${GITHUB_REPOSITORY}" --body-file /tmp/debug-comment.md || true
             exit $code
           fi
       - name: Assemble release APK (unsigned unless release env secrets are set)
@@ -149,7 +147,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - name: Download APKs
