@@ -90,7 +90,7 @@ class LocalOnlyHotspotController(private val context: Context) {
                 HotspotState.Active(
                     ssid = soft.ssid?.takeIf { it.isNotBlank() },
                     passphrase = soft.passphrase?.takeIf { it.isNotBlank() },
-                    bssid = soft.bssid?.takeIf { it.isNotBlank() },
+                    bssid = soft.bssid?.toString()?.takeIf { it.isNotBlank() },
                     security = securityTypeName(soft.securityType),
                 )
             } else {

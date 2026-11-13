@@ -67,7 +67,7 @@ object AppState {
             failedRequests = snapshot.failedRequests,
             connectTunnels = snapshot.connectTunnels,
             seenDevices = snapshot.seenDevices,
-            activeConnections = snapshot.activeConnections,
+            activeConnections = snapshot.activeConnections.toInt(),
             proxyPort = port,
         )
     }
