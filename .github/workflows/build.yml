@@ -90,37 +90,45 @@ jobs:
       - name: Configure projects
         run: |
           mkdir -p out
+          set +e
           ./gradlew --no-daemon --console=plain help > out/gradle-help.log 2>&1
           code=$?
+          set -e
           tail -n 80 out/gradle-help.log
           if [ $code -ne 0 ]; then
-            grep -E "What went wrong|Could not|Execution failed|error|Caused by|Exception" out/gradle-help.log | tail -n 4 | while IFS= read -r line; do echo "::error::$line"; done
+            python3 tools/ci-issue-comment.py gradle-help.log configure out/gradle-help.log
             exit $code
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
       - name: Assemble debug APK
         run: |
           mkdir -p out
+          set +e
           ./gradlew --no-daemon --console=plain --stacktrace :app:assembleDebug > out/gradle-debug.log 2>&1
           code=$?
+          set -e
           tail -n 150 out/gradle-debug.log
           if [ $code -ne 0 ]; then
-            {
-              echo "## assembleDebug failure on commit ${GITHUB_SHA}"
-              echo '```'
-              tail -c 52000 out/gradle-debug.log
-              echo '```'
-            } > /tmp/debug-comment.md
-            GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh issue comment 1 --repo "${GITHUB_REPOSITORY}" --body-file /tmp/debug-comment.md || true
+            python3 tools/ci-issue-comment.py gradle-debug.log assembleDebug out/gradle-debug.log
             exit $code
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
       - name: Assemble release APK (unsigned unless release env secrets are set)
         run: |
           mkdir -p out
+          set +e
           ./gradlew --no-daemon --console=plain --stacktrace :app:assembleRelease > out/gradle-release.log 2>&1
           code=$?
+          set -e
           tail -n 150 out/gradle-release.log
           if [ $code -ne 0 ]; then
-            grep -E "What went wrong|Could not|Execution failed|error|Caused by|Exception" out/gradle-release.log | tail -n 4 | while IFS= read -r line; do echo "::error::$line"; done
+            python3 tools/ci-issue-comment.py gradle-release.log assembleRelease out/gradle-release.log
             exit $code
           fi
         env:
@@ -128,6 +136,9 @@ jobs:
           HOMERELAY_RELEASE_STORE_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_STORE_PASSWORD }}
           HOMERELAY_RELEASE_KEY_ALIAS: ${{ secrets.HOMERELAY_RELEASE_KEY_ALIAS }}
           HOMERELAY_RELEASE_KEY_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_KEY_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
       - name: Collect artifacts
         run: |
           mkdir -p out
