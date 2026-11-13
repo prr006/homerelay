@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.homerelay.app.MainActivity
 import com.homerelay.app.R
 import com.homerelay.app.data.SettingsStore
@@ -295,12 +296,7 @@ class SharingService : Service() {
     }
 
     private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= 24) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
     /* ---------------- wakelock ---------------- */

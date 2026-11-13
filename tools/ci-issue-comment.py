@@ -12,7 +12,12 @@ import urllib.request
 
 log_name, step, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(log_path, "rb") as handle:
-    log = handle.read()[-48000:].decode("utf-8", "replace")
+    data = handle.read()
+HEAD = 30000
+TAIL = 20000
+head = data[:HEAD].decode("utf-8", "replace")
+tail = data[-TAIL:].decode("utf-8", "replace") if len(data) > HEAD + TAIL else data[HEAD:].decode("utf-8", "replace")
+log = head + "\n\n===== [... middle of log omitted ...] =====\n\n" + tail
 body = f"## {step} failed on commit {os.environ.get('GITHUB_SHA', '?')}\n\n```\n{log}\n```"
 req = urllib.request.Request(
     f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues/1/comments",
