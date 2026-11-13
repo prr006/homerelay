@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jvm-tests:
+    name: Core JVM tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK platform
+        uses: android-actions/setup-android@v3
+      - name: Install platform android-36
+        run: sdkmanager "platforms;android-36" > /dev/null
+      - name: Run framework-free test suite
+        run: ./tools/run-tests.sh
+
+  build:
+    name: Build APKs
+    runs-on: ubuntu-latest
+    needs: jvm-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install platform and build tools
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon :app:assembleDebug
+      - name: Assemble release APK (unsigned unless release env secrets are set)
+        run: ./gradlew --no-daemon :app:assembleRelease
+        env:
+          HOMERELAY_RELEASE_STORE_FILE: ${{ secrets.HOMERELAY_RELEASE_STORE_FILE }}
+          HOMERELAY_RELEASE_STORE_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_STORE_PASSWORD }}
+          HOMERELAY_RELEASE_KEY_ALIAS: ${{ secrets.HOMERELAY_RELEASE_KEY_ALIAS }}
+          HOMERELAY_RELEASE_KEY_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_KEY_PASSWORD }}
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/homerelay-debug.apk
+          cp app/build/outputs/apk/release/app-release*.apk out/homerelay-release.apk
+          ls -la out/
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: homerelay-apks
+          path: out/
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: homerelay-apks
+          path: out
+      - name: Checksums
+        run: (cd out && sha256sum *.apk > SHA256SUMS.txt) && cat out/SHA256SUMS.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          body: |
+            HomeRelay release build.
+
+            **homerelay-debug.apk** — installable, signed with the standard Android debug key.
+            **homerelay-release.apk** — signed with a private release key only if the repository
+            owner configured HOMERELAY_RELEASE_* secrets; otherwise the release APK is unsigned
+            and cannot be installed directly. See BUILDING.md for how to build a signed release
+            APK with your own keystore.
+
+            No M01/M36 hardware test results are claimed for this build; see TESTING notes in
+            the repository README. Verify on your own device and report findings.

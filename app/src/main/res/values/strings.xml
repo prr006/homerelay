@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">HomeRelay</string>
+    <string name="notification_channel_name">Internet sharing</string>
+    <string name="notification_channel_description">Active HomeRelay sharing session with proxy address, usage counters and a stop action.</string>
+    <string name="notification_title">HomeRelay is sharing</string>
+    <string name="notification_stop">Stop</string>
+</resources>

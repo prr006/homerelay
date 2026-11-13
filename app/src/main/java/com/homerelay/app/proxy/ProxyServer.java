@@ -82,8 +82,8 @@ public final class ProxyServer {
         public int maxBodyBytes = 32 * 1024 * 1024;
         public int maxClients = 64;
         public String viaHeader = "HomeRelay";
-        public String pacHost = null;      // host advertised inside the PAC file
-        public int pacPort = 8282;
+        public volatile String pacHost = null;   // host advertised inside the PAC file
+        public volatile int pacPort = 8282;   // port advertised in PAC/status; refreshed from boundPort()
         public String infoTitle = "HomeRelay";
     }
 
@@ -492,7 +492,6 @@ public final class ProxyServer {
 
     private byte[] readChunked(SocketInput in) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] lineBuf = new byte[8192];
         for (;;) {
             String line = in.readLine(8192);
             if (line == null) throw new IOException("unexpected eof in chunk header");
