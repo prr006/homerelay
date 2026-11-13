@@ -54,7 +54,18 @@ jobs:
       statuses: write
     steps:
       - name: Gradle wrapper sanity
-        run: ./gradlew --version
+        run: |
+          mkdir -p out
+          java -version
+          ./gradlew --version > out/gradle-version.log 2>&1
+          code=$?
+          cat out/gradle-version.log
+          if [ $code -ne 0 ]; then
+            python3 tools/ci-post-status.py "ci/wrapper" out/gradle-version.log || true
+            exit $code
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure projects
         run: |
           mkdir -p out
