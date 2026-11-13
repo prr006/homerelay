@@ -61,13 +61,6 @@ android {
     // so Android unit test source sets are intentionally left empty in this project.
 }
 
-// AGP 9 compiles Kotlin natively; language level is pinned via the top-level kotlin block.
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-    }
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")

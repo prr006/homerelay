@@ -77,9 +77,9 @@ jobs:
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
       - name: Assemble release APK (unsigned unless release env secrets are set)
-        run: ./gradlew --no-daemon :app:assembleRelease
+        run: ./gradlew --no-daemon --stacktrace :app:assembleRelease
         env:
           HOMERELAY_RELEASE_STORE_FILE: ${{ secrets.HOMERELAY_RELEASE_STORE_FILE }}
           HOMERELAY_RELEASE_STORE_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_STORE_PASSWORD }}
