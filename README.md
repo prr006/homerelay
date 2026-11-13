@@ -92,6 +92,36 @@ tests/, tools/                 Framework-free Java test suite + portable runner
 docs: README.md, BUILDING.md, NETWORK_ARCHITECTURE.md, TROUBLESHOOTING.md, PRIVACY.md, LICENSE
 ```
 
+## Feature status lists
+
+### Works (by construction; built in CI)
+- Home Wi‑Fi upstream detection with validation status and cellular-active warning.
+- LocalOnlyHotspot creation via official API; Android-assigned SSID/passphrase displayed live.
+- HTTP proxy with CONNECT tunneling, bound to the hotspot interface only (fails closed otherwise).
+- Wi‑Fi-only egress for proxy traffic and DNS (`Network.socketFactory` / `Network.getAllByName`).
+- Live session counters: bytes up/down, request counts, CONNECT tunnels, active connections, clients seen (10-min window), uptime.
+- Persistent foreground notification with live counters and a Stop action; partial wake lock with 8 h cap.
+- Client Guide screen: per-OS proxy setup, PAC URL, QR of the PAC URL, copy buttons.
+- Diagnostics (Checks tab): Android version, upstream presence/validation, cellular-only check, DNS, POST_NOTIFICATIONS, hotspot permission readiness.
+- Settings: proxy port, PAC toggle, System/Light/Dark theme, keep screen on, passphrase visibility, clear data.
+- M3 UI, dark/light themes, no nonfunctional buttons (every control wired).
+
+### Restricted (platform-imposed; app guides you instead)
+- Hotspot name/password are random per activation on Android 12+; the app displays them but cannot set them.
+- Foreground-service survival depends on the user exempting HomeRelay from One UI battery limits; the app cannot self-exempt.
+- Client proxy must be set manually (or via PAC) — no Android/iOS version lets an app set it, so the QR only encodes the PAC URL.
+- Per-client bandwidth limits, per-client byte accounting, and DHCP lease listing are not exposed to non-privileged apps — shown as "None yet"/counts or omitted, never invented.
+- No auto-start after reboot (not supported by stock Android for this use; manual start required).
+- Release signing requires the owner's HOMERELAY_RELEASE_* secrets; otherwise the release APK is unsigned.
+
+### Not possible / not done (unsupported)
+- Transparent Wi‑Fi bridging, repeater mode, mesh/roaming, or a client that needn't change any network settings.
+- Anything over mobile data — the proxy hard-fails without Wi‑Fi rather than fall back.
+- UDP relaying (TCP-only proxy); QUIC endpoints fall back to TCP where supported.
+- HTTPS inspection (CONNECT is opaque by design; certificates stay end-to-end).
+- Bypassing Samsung/MDM/enterprise hotspot restrictions (ERROR_TETHERING_DISALLOWED is reported, not circumvented).
+- Auto-start after reboot, silent battery-optimization bypass, or any use of private/privileged APIs.
+
 ## Compatibility summary
 
 | Setup | Status |
