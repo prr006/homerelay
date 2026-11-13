@@ -51,39 +51,15 @@ jobs:
     needs: jvm-tests
     permissions:
       contents: read
-      statuses: write
     steps:
-      - name: Gradle wrapper sanity
-        run: |
-          mkdir -p out
-          java -version
-          ./gradlew --version > out/gradle-version.log 2>&1
-          code=$?
-          cat out/gradle-version.log
-          if [ $code -ne 0 ]; then
-            python3 tools/ci-post-status.py "ci/wrapper" out/gradle-version.log || true
-            exit $code
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Configure projects
-        run: |
-          mkdir -p out
-          ./gradlew --no-daemon --console=plain help > out/gradle-help.log 2>&1
-          code=$?
-          tail -n 80 out/gradle-help.log
-          if [ $code -ne 0 ]; then
-            python3 tools/ci-post-status.py "ci/configure" out/gradle-help.log || true
-            exit $code
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/checkout@v4
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
       - name: Ensure Android SDK platform 36
         run: |
           set -e
@@ -102,8 +78,24 @@ jobs:
               exit 1
             fi
           fi
-      - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@v4
+      - name: Gradle wrapper sanity
+        run: |
+          mkdir -p out
+          java -version
+          ./gradlew --version > out/gradle-version.log 2>&1 || true
+          tail -n 30 out/gradle-version.log || true
+          grep -E "Exception|Error|error|FAIL|denied|not found|mismatch|Could not|corrupt|invalid" out/gradle-version.log | tail -n 3 | while IFS= read -r line; do echo "::error::$line"; done
+          grep -q "Gradle " out/gradle-version.log
+      - name: Configure projects
+        run: |
+          mkdir -p out
+          ./gradlew --no-daemon --console=plain help > out/gradle-help.log 2>&1
+          code=$?
+          tail -n 80 out/gradle-help.log
+          if [ $code -ne 0 ]; then
+            grep -E "What went wrong|Could not|Execution failed|error|Caused by|Exception" out/gradle-help.log | tail -n 4 | while IFS= read -r line; do echo "::error::$line"; done
+            exit $code
+          fi
       - name: Assemble debug APK
         run: |
           mkdir -p out
@@ -111,11 +103,9 @@ jobs:
           code=$?
           tail -n 150 out/gradle-debug.log
           if [ $code -ne 0 ]; then
-            python3 tools/ci-post-status.py "ci/assemble-debug" out/gradle-debug.log || true
+            grep -E "What went wrong|Could not|Execution failed|error|Caused by|Exception" out/gradle-debug.log | tail -n 4 | while IFS= read -r line; do echo "::error::$line"; done
             exit $code
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Assemble release APK (unsigned unless release env secrets are set)
         run: |
           mkdir -p out
@@ -123,7 +113,7 @@ jobs:
           code=$?
           tail -n 150 out/gradle-release.log
           if [ $code -ne 0 ]; then
-            python3 tools/ci-post-status.py "ci/assemble-release" out/gradle-release.log || true
+            grep -E "What went wrong|Could not|Execution failed|error|Caused by|Exception" out/gradle-release.log | tail -n 4 | while IFS= read -r line; do echo "::error::$line"; done
             exit $code
           fi
         env:
@@ -131,7 +121,6 @@ jobs:
           HOMERELAY_RELEASE_STORE_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_STORE_PASSWORD }}
           HOMERELAY_RELEASE_KEY_ALIAS: ${{ secrets.HOMERELAY_RELEASE_KEY_ALIAS }}
           HOMERELAY_RELEASE_KEY_PASSWORD: ${{ secrets.HOMERELAY_RELEASE_KEY_PASSWORD }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect artifacts
         run: |
           mkdir -p out
