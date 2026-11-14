@@ -465,14 +465,8 @@ class Diagnostics(private val context: Context) {
             withContext(Dispatchers.IO) {
                 // gstatic connectivity check endpoint: http:// prefix is what makes this an
                 // absolute-form proxy request rather than origin-form.
-                val result = ProxyHttpProbe.probeGet(
-                    host = host,
-                    port = port,
-                    absoluteUri = PLAIN_HTTP_PROBE_URL,
-                    hostHeader = PLAIN_HTTP_PROBE_HOST,
-                    connectTimeoutMs = 6_000,
-                    readTimeoutMs = 6_000,
-                )
+                // positional args: ProxyHttpProbe is a Java class (named args are prohibited)
+                val result = ProxyHttpProbe.probeGet(host, port, PLAIN_HTTP_PROBE_URL, PLAIN_HTTP_PROBE_HOST, 6_000, 6_000)
                 if (result.success) {
                     CheckResult(
                         id, label, CheckStatus.PASS,
