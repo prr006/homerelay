@@ -48,7 +48,7 @@ class LocalOnlyHotspotController(private val context: Context) {
 
     private val appContext = context.applicationContext
     private val wifiManager =
-        appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val handler = Handler(Looper.getMainLooper())
     private val lock = Any()
 
@@ -61,6 +61,12 @@ class LocalOnlyHotspotController(private val context: Context) {
 
     fun start() {
         // Defense in depth: the service checks too, but never trust the caller.
+        if (wifiManager == null) {
+            _state.value = HotspotState.Failed(
+                "This device reports no Wi-Fi service, so a hotspot cannot be created. HomeRelay requires Wi-Fi hardware.",
+            )
+            return
+        }
         if (!HotspotPermissions.hasHotspotPermission(appContext)) {
             _state.value = HotspotState.Failed(
                 "Android requires the ${hotspotPermissionLabel()} permission before it will " +
