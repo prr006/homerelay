@@ -15,7 +15,7 @@ public final class HotspotPolicyTest {
         assertFalse(HotspotPolicy.hotspotPermissionGranted(31, false, false, false));
         assertEquals(
             Arrays.asList(HotspotPolicy.FINE_LOCATION, HotspotPolicy.COARSE_LOCATION),
-            HotspotPolicy.missingHotspotPermissions(31, false, false, false),
+            HotspotPolicy.missingHotspotPermissions(31, false, false, false)
         );
     }
 
@@ -32,7 +32,7 @@ public final class HotspotPolicyTest {
         // But we still ask for fine so the dialog presents the precise permission named in the docs.
         assertEquals(
             List.of(HotspotPolicy.FINE_LOCATION),
-            HotspotPolicy.missingHotspotPermissions(31, false, true, false),
+            HotspotPolicy.missingHotspotPermissions(31, false, true, false)
         );
     }
 
@@ -42,7 +42,7 @@ public final class HotspotPolicyTest {
         assertTrue(HotspotPolicy.hotspotPermissionGranted(30, true, false, false));
         assertEquals(
             Arrays.asList(HotspotPolicy.FINE_LOCATION, HotspotPolicy.COARSE_LOCATION),
-            HotspotPolicy.missingHotspotPermissions(30, false, false, false),
+            HotspotPolicy.missingHotspotPermissions(30, false, false, false)
         );
     }
 
@@ -66,7 +66,7 @@ public final class HotspotPolicyTest {
         assertFalse(HotspotPolicy.hotspotPermissionGranted(33, true, true, false));
         assertEquals(
             List.of(HotspotPolicy.NEARBY_WIFI_DEVICES),
-            HotspotPolicy.missingHotspotPermissions(33, true, true, false),
+            HotspotPolicy.missingHotspotPermissions(33, true, true, false)
         );
     }
 
@@ -75,7 +75,7 @@ public final class HotspotPolicyTest {
         assertFalse(HotspotPolicy.hotspotPermissionGranted(37, true, true, false));
         assertEquals(
             List.of(HotspotPolicy.NEARBY_WIFI_DEVICES),
-            HotspotPolicy.missingHotspotPermissions(37, true, true, false),
+            HotspotPolicy.missingHotspotPermissions(37, true, true, false)
         );
     }
 
