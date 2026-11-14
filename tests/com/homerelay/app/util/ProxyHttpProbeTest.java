@@ -209,7 +209,7 @@ public final class ProxyHttpProbeTest {
                 assertTrue("transport parse should succeed for " + statusLine, raw.success);
                 ProxyHttpProbe.Result v = ProxyHttpProbe.requireExactStatus(raw, 204);
                 assertFalse("expected 204, got " + statusLine + " must NOT pass", v.success);
-                assertNotNull(v.error);
+                assertNotNull("error message present for " + statusLine, v.error);
                 assertTrue("actual status line quoted, got: " + v.error, v.error.contains(statusLine));
             }
         }
