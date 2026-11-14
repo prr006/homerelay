@@ -4,6 +4,15 @@ Real fixes for the failures a HomeRelay user can actually hit. Ordered roughly b
 If something here is wrong or incomplete, open an issue with your device model, Android/One UI
 build, and the exact error text from the app — not guesses.
 
+## v1.2.2 fix — "Cleartext HTTP traffic to connectivitycheck.gstatic.com not permitted"
+
+v1.2.1's plain-HTTP check used `HttpURLConnection` to an `http://` URL. API 36 blocks
+app-wide cleartext HTTP (and HomeRelay does **not** opt out), so the check failed before a
+single byte reached the proxy — while HTTPS (CONNECT) passed. v1.2.2 probes the **local
+proxy** over a raw socket in absolute-form (`GET http://connectivitycheck.gstatic.com/
+generate_204 HTTP/1.1`, `Host`, `Connection: close`) and parses the real status line.
+No `usesCleartextTraffic`, no network-policy weakening. Upgrade if on v1.2.1.
+
 ## v1.2.0 defect fixed in v1.2.1 — proxy socket fails / Checks fail locally
 
 v1.2.0 used `WifiP2pInfo.groupOwnerAddress` as the proxy bind address. Android anonymises

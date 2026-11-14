@@ -133,10 +133,17 @@ answer either way.
    Android anonymises for Group Owners — the proxy failed to bind and the local proxy/HTTP
    checks failed even though the group itself was up. v1.2.1 resolves the address from the
    P2P interface as described above.
-9. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
+9. **v1.2.2 diagnostic correction.** The plain-HTTP check no longer uses
+   `HttpURLConnection` (API 36 blocks cleartext → the check failed with
+   "Cleartext HTTP traffic to connectivitycheck.gstatic.com not permitted" before any
+   byte reached the proxy). It now speaks to the local HomeRelay proxy directly over a
+   raw socket in absolute-form (`GET http://connectivitycheck.gstatic.com/generate_204
+   HTTP/1.1`, `Host` + `Connection: close`), parses the real status line and headers,
+   and reports PASS only on a well-formed proxy response. HTTPS is unchanged.
+10. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
    tunnel counts, active connections, and distinct client IPs seen in a rolling 10-minute
    window. All of it is in-memory, reset per session.
-10. **Stop sharing** — from the app or the notification — stops the proxy, removes the P2P
+11. **Stop sharing** — from the app or the notification — stops the proxy, removes the P2P
    group (`removeGroup`), unregisters the pinned-network callback, releases the wake lock, and
    the service stops itself. Start/Stop cycles are race-safe via a generation token
    (`SessionGuard`): a stale callback can never tear down a newer session.

@@ -14,6 +14,7 @@ import com.homerelay.app.net.UpstreamSelector
 import com.homerelay.app.p2p.P2pRuntime
 import com.homerelay.app.state.AppState
 import com.homerelay.app.state.SharingPhase
+import com.homerelay.app.util.ProxyHttpProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -22,6 +23,9 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.Socket
 import java.net.URL
+
+private const val PLAIN_HTTP_PROBE_URL = "http://connectivitycheck.gstatic.com/generate_204"
+private const val PLAIN_HTTP_PROBE_HOST = "connectivitycheck.gstatic.com"
 
 enum class CheckStatus { PASS, WARN, FAIL, INFO }
 
@@ -435,17 +439,63 @@ class Diagnostics(private val context: Context) {
             CheckStatus.FAIL, "Connection timed out.")
     }
 
-    private suspend fun checkPlainHttpViaProxy(): CheckResult = httpViaProxy(
-        id = "http_via_proxy",
-        label = "Plain HTTP through the proxy",
-        url = "http://connectivitycheck.gstatic.com/generate_204",
-    )
+    /**
+     * Plain HTTP through the proxy.
+     *
+     * API 36 blocks app-wide cleartext HTTP (`usesCleartextTraffic` defaults to false and
+     * HomeRelay does NOT opt out), so `HttpURLConnection` to an http:// URL throws before a
+     * single byte leaves the device. Instead we speak to the LOCAL proxy ourselves over a
+     * raw socket in absolute-form — exactly what a browser configured to use the proxy does
+     * — and the proxy fetches the target over the pinned upstream Wi-Fi. No cleartext
+     * policy is weakened; HTTPS handling is unchanged.
+     */
+    private suspend fun checkPlainHttpViaProxy(): CheckResult {
+        val s = AppState.state.value
+        val id = "http_via_proxy"
+        val label = "Plain HTTP through the proxy"
+        if (!s.sharing) {
+            return CheckResult(id, label, CheckStatus.INFO, "Not sharing right now.")
+        }
+        val host = s.bindAddress
+        if (host == null) {
+            return CheckResult(id, label, CheckStatus.FAIL, "No bind address.")
+        }
+        val port = s.proxyPort
+        return withTimeoutOrNull(10_000) {
+            withContext(Dispatchers.IO) {
+                // gstatic connectivity check endpoint: http:// prefix is what makes this an
+                // absolute-form proxy request rather than origin-form.
+                val result = ProxyHttpProbe.probeGet(
+                    host = host,
+                    port = port,
+                    absoluteUri = PLAIN_HTTP_PROBE_URL,
+                    hostHeader = PLAIN_HTTP_PROBE_HOST,
+                    connectTimeoutMs = 6_000,
+                    readTimeoutMs = 6_000,
+                )
+                if (result.success) {
+                    CheckResult(
+                        id, label, CheckStatus.PASS,
+                        "Proxy answered ${result.statusCode} for $PLAIN_HTTP_PROBE_URL " +
+                            "(absolute-form via $host:$port).",
+                    )
+                } else {
+                    CheckResult(
+                        id, label, CheckStatus.FAIL,
+                        "No usable answer from the proxy: ${result.error}",
+                    )
+                }
+            }
+        } ?: CheckResult(id, label, CheckStatus.FAIL, "Timed out through the proxy.")
+    }
 
-    private suspend fun checkHttpsViaProxy(): CheckResult = httpViaProxy(
+    private suspend fun checkHttpsViaProxy(): CheckResult = httpsViaProxy(
         id = "https_via_proxy",
         label = "HTTPS through the proxy (CONNECT)",
         url = "https://connectivitycheck.gstatic.com/generate_204",
     )
+
+    private suspend fun httpsViaProxy(id: String, label: String, url: String): CheckResult = httpViaProxy(id, label, url)
 
     private suspend fun httpViaProxy(id: String, label: String, url: String): CheckResult {
         val s = AppState.state.value
