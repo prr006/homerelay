@@ -255,14 +255,14 @@ class P2pGroupController(private val context: Context) {
                     if (gen != generation) return@requestConnectionInfo
                     if (_state.value is P2pGroupState.Failed) return@requestConnectionInfo
                     _state.value = P2pGroupState.Active(
-                        networkName = group.networkName?.takeIf { it.isNotBlank() },
-                        passphrase = runCatching { group.passphrase }.getOrNull()?.takeIf { it.isNotBlank() },
-                        interfaceName = group.interfaceName?.takeIf { it.isNotBlank() },
-                        frequencyMhz = group.frequency.takeIf { it > 0 },
-                        securityType = securityTypeName(group.securityType),
+                        networkName = runCatching { group.getNetworkName() }.getOrNull()?.takeIf { it.isNotBlank() },
+                        passphrase = runCatching { group.getPassphrase() }.getOrNull()?.takeIf { it.isNotBlank() },
+                        interfaceName = runCatching { group.getInterface() }.getOrNull()?.takeIf { it.isNotBlank() },
+                        frequencyMhz = runCatching { group.getFrequency() }.getOrNull()?.takeIf { it > 0 },
+                        securityType = securityTypeName(runCatching { group.getSecurityType() }.getOrDefault(WifiP2pGroup.SECURITY_TYPE_UNKNOWN)),
                         groupOwnerAddress = ownerAddress,
-                        isGroupOwner = group.isGroupOwner,
-                        clientCount = group.clientList?.size ?: 0,
+                        isGroupOwner = runCatching { group.isGroupOwner() }.getOrDefault(false),
+                        clientCount = runCatching { group.getClientList()?.size }.getOrNull() ?: 0,
                     )
                 }
             }

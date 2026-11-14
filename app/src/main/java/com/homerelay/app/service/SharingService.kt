@@ -170,18 +170,22 @@ class SharingService : Service() {
     private suspend fun runSession(settings: com.homerelay.app.data.Settings, sessionId: Long, upstream: Network) {
         // 1. Wi-Fi Direct group (Group Owner)
         p2p.start()
-        var groupState: P2pGroupState? = null
-        withTimeoutOrNull(20_000) {
-            while (true) {
-                if (!session.isCurrent(sessionId)) return
+        val groupState: P2pGroupState? = withTimeoutOrNull(20_000) {
+            var result: P2pGroupState? = null
+            while (result == null) {
+                if (!session.isCurrent(sessionId)) break
                 p2p.refresh()
                 when (val s = p2p.state.value) {
-                    is P2pGroupState.Active, is P2pGroupState.Failed -> { groupState = s; break }
-                    P2pGroupState.Idle -> return // user pressed Stop
+                    is P2pGroupState.Active, is P2pGroupState.Failed -> result = s
+                    P2pGroupState.Idle -> break // user pressed Stop
                     else -> delay(500)
                 }
             }
+            result
         }
+        if (!session.isCurrent(sessionId)) return // a newer session took over while we waited
+        if (groupState == null && p2p.state.value == P2pGroupState.Idle) return // user pressed Stop
+
         val active = when (val g = groupState) {
             is P2pGroupState.Active -> g
             is P2pGroupState.Failed -> { fail(g.reason, sessionId); return }
@@ -315,14 +319,14 @@ class SharingService : Service() {
             }
         }
         upstreamCallback = cb
-        runCatching {
-            getSystemService(ConnectivityManager::class.java).registerNetworkCallback(upstream, cb)
-        }
+        val cm = getSystemService(ConnectivityManager::class.java)
+        runCatching { cm.registerNetworkCallback(upstream, cb) }
     }
 
     private fun unregisterPinnedNetworkCallback() {
         upstreamCallback?.let { cb ->
-            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) }
+            val cm = getSystemService(ConnectivityManager::class.java)
+            runCatching { cm.unregisterNetworkCallback(cb) }
         }
         upstreamCallback = null
     }

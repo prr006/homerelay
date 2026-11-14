@@ -37,12 +37,12 @@ object UpstreamSelector {
             val caps = cm.getNetworkCapabilities(net) ?: continue
             val iface = runCatching { cm.getLinkProperties(net)?.interfaceName }.getOrNull()
             result += UpstreamSelection.Candidate(
-                id = netId(net),
-                wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
-                cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
-                p2p = UpstreamSelection.isNonUpstreamInterface(iface),
-                validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
-                internet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                netId(net),
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                UpstreamSelection.isNonUpstreamInterface(iface),
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
             )
         }
         return result
