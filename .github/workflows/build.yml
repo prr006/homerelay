@@ -79,6 +79,11 @@ jobs:
               exit 1
             fi
           fi
+          if [ ! -x "${ANDROID_HOME}"/build-tools/36.0.0/apksigner ] && ls "${ANDROID_HOME}"/build-tools >/dev/null 2>&1; then
+            if [ -n "$SDKMANAGER" ]; then
+              "$SDKMANAGER" "build-tools;36.0.0"
+            fi
+          fi
       - name: Gradle wrapper sanity
         run: |
           mkdir -p logs
@@ -115,6 +120,12 @@ jobs:
             python3 tools/ci-issue-comment.py gradle-debug.log assembleDebug logs/gradle-debug.log
             exit $code
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+      - name: Verify debug APK (badging, permissions, signature, sha256)
+        run: ./tools/ci-verify-apk.sh app/build/outputs/apk/debug/app-debug.apk
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

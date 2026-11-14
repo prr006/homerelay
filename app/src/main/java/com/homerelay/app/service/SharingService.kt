@@ -52,6 +52,7 @@ class SharingService : Service() {
     private var tickJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val sessionCounter = java.util.concurrent.atomic.AtomicLong(0L)
 
     override fun onCreate() {
         super.onCreate()
@@ -89,6 +90,28 @@ class SharingService : Service() {
         val current = AppState.state.value
         if (current.phase == SharingPhase.Sharing || current.busy) return
 
+        // Never ask the system for a hotspot we are not allowed to have — the system
+        // refuses with "doesn't have coarse/fine location permission" and the failure
+        // surfaces later, disconnected from the cause. Fail fast with a clear message.
+        if (!com.homerelay.app.util.HotspotPermissions.hasHotspotPermission(this)) {
+            val label = if (Build.VERSION.SDK_INT >= 33) "Nearby devices (Wi-Fi)" else "Location"
+            AppState.update {
+                it.copy(
+                    phase = SharingPhase.Failed,
+                    errorMessage = "Android requires the $label permission for the hotspot. " +
+                        "Grant it in the system dialog or App info → Permissions, then press Start sharing again.",
+                )
+            }
+            startForegroundCompat(buildNotification(getString(R.string.notification_title),
+                "Sharing not started — permission missing"))
+            scope.launch {
+                delay(4_000)
+                stopSelfAndClean()
+            }
+            return
+        }
+
+        val session = sessionCounter.incrementAndGet()
         val settings = SettingsStore(this).load()
         AppState.update {
             it.copy(
@@ -104,21 +127,31 @@ class SharingService : Service() {
         startForegroundCompat(buildNotification(getString(R.string.notification_title),
             getString(R.string.notification_channel_name)))
 
-        scope.launch { runSession(settings) }
+        scope.launch { runSession(settings, session) }
     }
 
-    private suspend fun runSession(settings: com.homerelay.app.data.Settings) {
+    private suspend fun runSession(settings: com.homerelay.app.data.Settings, session: Long) {
         // 1. Hotspot
         hotspot.start()
         val terminal = withTimeoutOrNull(15_000) {
-            hotspot.state.first { it is HotspotState.Active || it is HotspotState.Failed }
+            hotspot.state.first {
+                it is HotspotState.Active || it is HotspotState.Failed || it is HotspotState.Idle
+            }
         }
         when (terminal) {
-            null -> fail("Hotspot did not start within 15 seconds. Try toggling Wi-Fi off and on.")
-            is HotspotState.Failed -> fail(terminal.reason)
+            // User pressed Stop during startup — exit quietly, stop() already cleaned up.
+            HotspotState.Idle -> return
+            null -> fail(
+                "Hotspot did not start within 15 seconds. If you see “Caller already has an " +
+                    "active localonly hotspot request” in the logs, press Stop, wait a few " +
+                    "seconds, and start again. Otherwise try toggling Wi-Fi off and on.",
+                session,
+            )
+            is HotspotState.Failed -> fail(terminal.reason, session)
             is HotspotState.Active -> { }
-            else -> fail("Hotspot did not start.")
+            else -> fail("Hotspot did not start.", session)
         }
+        if (sessionCounter.get() != session) return // a newer session took over while we waited
         val active = hotspot.state.value as? HotspotState.Active ?: return
 
         // 2. Bind address — the hotspot interface, never the upstream network.
@@ -128,6 +161,7 @@ class SharingService : Service() {
                 "Could not identify the hotspot's interface. Candidates: " +
                     HotspotInterfaceLocator.debugCandidateNames(this).joinToString(", ").ifEmpty { "none" } +
                     ". Refusing to bind the proxy to all interfaces.",
+                session,
             )
             return
         }
@@ -154,12 +188,16 @@ class SharingService : Service() {
                 server.start(listOf(bindAddress), 0)
                 server.boundPort()
             } catch (e2: Exception) {
-                fail("Proxy could not bind to $bindAddress: ${e2.message}")
-                hotspot.stop()
+                fail("Proxy could not bind to $bindAddress: ${e2.message}", session)
                 return
             }
         }
         config.pacPort = boundPort
+        if (sessionCounter.get() != session) {
+            // User pressed Stop while we were binding: tear the fresh proxy down and leave.
+            runCatching { server.stop() }
+            return
+        }
         proxy = server
 
         val pacUrl = if (settings.pacEnabled) "http://$bindAddress:$boundPort/proxy.pac" else null
@@ -202,20 +240,26 @@ class SharingService : Service() {
         }
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: String, session: Long? = null) {
+        if (session != null && sessionCounter.get() != session) return // stale session; a newer one is running
         AppState.update { it.copy(phase = SharingPhase.Failed, errorMessage = message) }
+        proxy?.let { runCatching { it.stop() } }
+        proxy = null
         hotspot.stop()
+        releaseWakeLock()
         updateNotification(
             getString(R.string.notification_title),
             "Sharing stopped: $message",
         )
+        val owner = session ?: sessionCounter.get()
         scope.launch {
             delay(4000)
-            stopSelfAndClean()
+            if (sessionCounter.get() == owner) stopSelfAndClean()
         }
     }
 
     fun stopSharing() {
+        sessionCounter.incrementAndGet() // invalidate pending fail-cleanups and session waits
         tickJob?.cancel()
         tickJob = null
         proxy?.let { p ->
@@ -231,9 +275,10 @@ class SharingService : Service() {
     }
 
     private fun stopSelfAndClean() {
+        sessionCounter.incrementAndGet()
         tickJob?.cancel()
         tickJob = null
-        proxy?.stop()
+        proxy?.let { runCatching { it.stop() } }
         proxy = null
         hotspot.stop()
         releaseWakeLock()

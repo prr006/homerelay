@@ -10,6 +10,7 @@ import android.provider.Settings as AndroidSettings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,11 +39,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.homerelay.app.data.Settings
 import com.homerelay.app.data.SettingsStore
 import com.homerelay.app.data.ThemeChoice
+import com.homerelay.app.util.HotspotPermissions
 import com.homerelay.app.diagnostics.Diagnostics
 import com.homerelay.app.net.UpstreamMonitor
 import com.homerelay.app.service.SharingService
@@ -65,6 +66,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var settingsStore: SettingsStore
     private lateinit var upstream: UpstreamMonitor
     private lateinit var diagnostics: Diagnostics
+
+    private var permissionDenied by androidx.compose.runtime.mutableStateOf(false)
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        // Only the hotspot permission blocks sharing. Notification denial just means no shade UI.
+        if (HotspotPermissions.hasHotspotPermission(this@MainActivity)) {
+            sendServiceAction(SharingService.ACTION_START)
+        } else {
+            permissionDenied = true
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -124,6 +138,8 @@ class MainActivity : ComponentActivity() {
                     onStartRequested = { startSharingWithPermissions() },
                     onStopRequested = { sendServiceAction(SharingService.ACTION_STOP) },
                     onOpenAppDetails = { openAppDetails() },
+                    permissionDenied = permissionDenied,
+                    onDismissPermissionDenied = { permissionDenied = false },
                 )
             }
         }
@@ -143,25 +159,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startSharingWithPermissions() {
-        val needsFineLocation = Build.VERSION.SDK_INT < 33 &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED
-        val needsNearbyWifi = Build.VERSION.SDK_INT >= 33 &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) !=
-            PackageManager.PERMISSION_GRANTED
-        val needsNotification = Build.VERSION.SDK_INT >= 33 &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-
+        if (HotspotPermissions.hasHotspotPermission(this)) {
+            sendServiceAction(SharingService.ACTION_START)
+            return
+        }
         val toRequest = buildList {
-            if (needsFineLocation) add(Manifest.permission.ACCESS_FINE_LOCATION)
-            if (needsNearbyWifi) add(Manifest.permission.NEARBY_WIFI_DEVICES)
-            if (needsNotification) add(Manifest.permission.POST_NOTIFICATIONS)
+            addAll(HotspotPermissions.missingHotspotPermissions(this@MainActivity))
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.distinct()
+        if (toRequest.isEmpty()) { // hotspot permission satisfied after all (race)
+            sendServiceAction(SharingService.ACTION_START)
+            return
         }
-        if (toRequest.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), REQ_PERMISSIONS)
-        }
-        sendServiceAction(SharingService.ACTION_START)
+        // The service is started ONLY from the launcher callback, after the user answers.
+        permissionLauncher.launch(toRequest.toTypedArray())
     }
 
     private fun sendServiceAction(action: String) {
@@ -173,9 +189,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    companion object {
-        private const val REQ_PERMISSIONS = 42
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,6 +207,8 @@ private fun HomeRelayApp(
     onStartRequested: () -> Unit,
     onStopRequested: () -> Unit,
     onOpenAppDetails: () -> Unit,
+    permissionDenied: Boolean,
+    onDismissPermissionDenied: () -> Unit,
 ) {
     var tab by remember { mutableStateOf(Tab.SHARE) }
     val upstreamSnapshot by upstream.snapshot.collectAsStateWithLifecycle()
@@ -259,6 +274,34 @@ private fun HomeRelayApp(
                 )
             }
         }
+    }
+
+    if (permissionDenied) {
+        AlertDialog(
+            onDismissRequest = onDismissPermissionDenied,
+            title = { Text("Permission needed") },
+            text = {
+                Text(
+                    "Android refuses to create the local-only hotspot unless HomeRelay holds the " +
+                        (if (Build.VERSION.SDK_INT >= 33)
+                            "Nearby devices (Wi-Fi)"
+                        else
+                            "Location") +
+                        " permission. This is an Android requirement for all apps — HomeRelay does " +
+                        "not use your location at all; it only asks because the hotspot API demands it.\n\n" +
+                        "If the system dialog no longer appears, open App info → Permissions and grant it manually.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDismissPermissionDenied()
+                    onOpenAppDetails()
+                }) { Text("Open App info") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissPermissionDenied) { Text("Cancel") }
+            },
+        )
     }
 
     if (showFirstRun) {

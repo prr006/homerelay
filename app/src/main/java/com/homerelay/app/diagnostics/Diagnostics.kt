@@ -132,23 +132,27 @@ class Diagnostics(private val context: Context) {
     } ?: CheckResult("dns", "DNS resolution", CheckStatus.FAIL, "DNS resolution timed out.")
 
     private fun checkPermissions(): CheckResult {
-        val pm = context.packageManager
-        val pkg = context.packageName
-        val fine = pm.checkPermission(
-            android.Manifest.permission.ACCESS_FINE_LOCATION, pkg,
-        ) == PackageManager.PERMISSION_GRANTED
-        val nearby = if (Build.VERSION.SDK_INT >= 33) {
-            pm.checkPermission(
-                android.Manifest.permission.NEARBY_WIFI_DEVICES, pkg,
-            ) == PackageManager.PERMISSION_GRANTED
-        } else true
-        val granted = if (Build.VERSION.SDK_INT >= 33) nearby else fine
+        val fine = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        val coarse = context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        val nearby = Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(android.Manifest.permission.NEARBY_WIFI_DEVICES) ==
+            PackageManager.PERMISSION_GRANTED
+        val granted = com.homerelay.app.util.HotspotPolicy.hotspotPermissionGranted(
+            Build.VERSION.SDK_INT, fine, coarse, nearby,
+        )
+        val label = if (Build.VERSION.SDK_INT >= 33) "Nearby Wi-Fi devices permission"
+        else "Location permission (Wi-Fi)"
         return CheckResult(
             id = "permissions",
-            label = if (Build.VERSION.SDK_INT >= 33) "Nearby Wi-Fi devices permission" else "Location permission (Wi-Fi)",
+            label = label,
             status = if (granted) CheckStatus.PASS else CheckStatus.FAIL,
-            detail = if (granted) "Granted — required for the local hotspot on this Android version."
-            else "Not granted — Android requires it to see hotspot/SSID information. Grant it from the system dialog or App info.",
+            detail = if (granted) "Granted — the hotspot can be requested on this Android version."
+            else if (Build.VERSION.SDK_INT >= 33)
+                "Not granted — Android 13+ requires NEARBY_WIFI_DEVICES for the local hotspot. Grant it from the system dialog or App info → Permissions."
+            else
+                "Not granted — Android 12 and below refuse the hotspot unless Location (coarse or fine) is granted. HomeRelay never reads your location; the hotspot API requires the permission. Grant it from the system dialog or App info → Permissions.",
         )
     }
 

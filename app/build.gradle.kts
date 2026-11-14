@@ -19,11 +19,21 @@ android {
         // LocalOnlyHotspot public API requires API 26 (Android 8.0+).
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     signingConfigs {
+        // Debug builds sign with the committed project debug keystore (standard public
+        // Android debug credentials: alias androiddebugkey / password android). This is
+        // NOT a secret; it exists so every CI run and every local build produce the SAME
+        // signature, allowing updates over a previously installed debug build.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         // Release keys are NEVER committed. Provide them via environment:
         //   HOMERELAY_RELEASE_STORE_FILE, HOMERELAY_RELEASE_STORE_PASSWORD,
         //   HOMERELAY_RELEASE_KEY_ALIAS, HOMERELAY_RELEASE_KEY_PASSWORD
