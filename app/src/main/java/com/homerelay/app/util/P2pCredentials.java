@@ -43,7 +43,7 @@ public final class P2pCredentials {
     }
 
     private static String randomFrom(char[] alphabet, int length, String prefix) {
-        StringBuilder sb = new StringBuilder(prefix).ensureCapacity(prefix.length() + length);
+        StringBuilder sb = new StringBuilder(prefix.length() + length).append(prefix);
         for (int i = 0; i < length; i++) sb.append(alphabet[RNG.nextInt(alphabet.length)]);
         return sb.toString();
     }
