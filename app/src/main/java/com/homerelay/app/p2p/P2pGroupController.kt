@@ -11,6 +11,8 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import com.homerelay.app.util.GroupConfigPlan
+import com.homerelay.app.util.GroupCreationMode
 import com.homerelay.app.util.P2pCredentials
 import com.homerelay.app.util.SharingPermissions
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,7 +121,12 @@ class P2pGroupController(private val context: Context) {
     /** True while the P2P radio is reported enabled, or unknown (no broadcast seen yet). */
     fun isP2pEnabled(): Boolean = lastP2pEnabledState != WIFI_P2P_STATE_DISABLED
 
-    fun start() {
+    /**
+     * @param mode v1.2.4 A/B experiment: how the group configuration is built.
+     *             The caller (service) is responsible for stopping any previous group
+     *             before selecting a new mode for a new session.
+     */
+    fun start(mode: GroupCreationMode = GroupCreationMode.DEFAULT) {
         if (wifiP2pManager == null) {
             _state.value = P2pGroupState.Failed(
                 "This device reports no Wi-Fi Direct service, so a group cannot be created. " +
@@ -148,7 +155,10 @@ class P2pGroupController(private val context: Context) {
                 else -> Unit
             }
             val gen = ++generation
+            // Credentials are generated for custom modes only; system-managed mode must not
+            // influence Android's choices in any way.
             val creds = P2pCredentials.generate()
+            val plan = GroupConfigPlan.forMode(mode, creds)
             _state.value = P2pGroupState.Starting
             val ch = openChannelLocked()
             if (ch == null) {
@@ -159,14 +169,17 @@ class P2pGroupController(private val context: Context) {
                 return
             }
             try {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    val config = WifiP2pConfig.Builder()
-                        .setNetworkName(creds.networkName)
-                        .setPassphrase(creds.passphrase)
-                        .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
-                        .apply { if (Build.VERSION.SDK_INT >= 29) enablePersistentMode(false) }
-                        .build()
-                        .apply { groupOwnerIntent = 15 }
+                if (Build.VERSION.SDK_INT >= 29 && plan.useCustomConfig) {
+                    val config = WifiP2pConfig.Builder().apply {
+                        setNetworkName(plan.networkName)
+                        setPassphrase(plan.passphrase)
+                        if (plan.forceBand2ghz) {
+                            setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
+                        }
+                        enablePersistentMode(false)
+                    }.build().apply {
+                        if (plan.groupOwnerIntent > 0) groupOwnerIntent = plan.groupOwnerIntent
+                    }
                     wifiP2pManager.createGroup(ch, config, object : WifiP2pManager.ActionListener {
                         override fun onSuccess() { /* group formation reported via broadcast / refresh() */ }
                         override fun onFailure(reason: Int) {
@@ -177,6 +190,9 @@ class P2pGroupController(private val context: Context) {
                         }
                     })
                 } else {
+                    // Mode B (system-managed), or custom mode on pre-29 hardware where
+                    // WifiP2pConfig is unavailable: no config at all. For pre-29 custom
+                    // requests we cannot force credentials — same as legacy behaviour.
                     @Suppress("DEPRECATION")
                     wifiP2pManager.createGroup(ch, object : WifiP2pManager.ActionListener {
                         override fun onSuccess() { /* creds read from requestGroupInfo() */ }

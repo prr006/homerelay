@@ -58,11 +58,14 @@ class Diagnostics(private val context: Context) {
             checkNotCellularOnly(),
             checkUpstreamSurvived(),
             checkDnsResolution(),
+            checkGroupMode(),
             checkGroupCreation(),
             checkGroupOwner(),
+            checkSsidAdvertisement(),
             checkGroupInterface(),
             checkGroupIp(),
             checkCredentials(),
+            checkGroupClients(),
             checkProxyListening(),
             checkPlainHttpViaProxy(),
             checkHttpsViaProxy(),
@@ -260,11 +263,98 @@ class Diagnostics(private val context: Context) {
             },
             detail = when (s.phase) {
                 SharingPhase.Sharing, SharingPhase.UpstreamUnavailable ->
-                    "Group formed: ${s.p2pSsid ?: "SSID hidden by Android"} on ${s.groupInterfaceName ?: "unknown interface"}."
+                    "Group formed: ${s.p2pSsid ?: "SSID hidden by Android"} on ${s.groupInterfaceName ?: "unknown interface"}" +
+                        (s.groupCreationMode?.let { " (mode: $it)" } ?: "") + "."
                 SharingPhase.Starting, SharingPhase.Stopping -> "Group creation in progress…"
                 SharingPhase.Failed -> "Last error: ${s.errorMessage ?: "unknown"}"
                 SharingPhase.Idle -> "Not sharing right now."
             },
+        )
+    }
+
+    private fun checkGroupMode(): CheckResult {
+        val s = AppState.state.value
+        val mode = s.groupCreationMode
+        return CheckResult(
+            id = "group_mode",
+            label = "Group creation mode",
+            status = CheckStatus.INFO,
+            detail = if (mode != null) {
+                "This session used: $mode. Switch in Settings → Wi-Fi Direct group mode. " +
+                    "Changing the mode stops any active group before the next session starts."
+            } else {
+                "Not sharing right now. The mode is selected in Settings → Wi-Fi Direct group mode " +
+                    "(A = custom 2.4 GHz, B = system-managed, C = custom credentials + default band)."
+            },
+        )
+    }
+
+    /**
+     * Distinguishes the legacy reachability stage: a group is only useful to a legacy Wi-Fi
+     * client if it advertises a DIRECT-* SSID on a compatible (2.4 GHz) band with WPA2.
+     * Peer discovery succeeding does NOT prove this — do not read PASS here as client proof.
+     */
+    private fun checkSsidAdvertisement(): CheckResult {
+        val s = AppState.state.value
+        if (!s.sharing) {
+            return CheckResult(
+                id = "ssid_advertisement",
+                label = "Legacy Wi-Fi SSID advertisement",
+                status = CheckStatus.INFO,
+                detail = "Not sharing right now.",
+            )
+        }
+        val ssid = s.p2pSsid
+        val freq = s.groupFrequencyMhz
+        return when {
+            ssid == null -> CheckResult(
+                id = "ssid_advertisement",
+                label = "Legacy Wi-Fi SSID advertisement",
+                status = CheckStatus.WARN,
+                detail = "Android formed the group but did not report an SSID — legacy clients cannot be told what to join. " +
+                    "If clients cannot see the network on Mode A/C, try Mode B (system-managed) in Settings and compare.",
+            )
+            !ssid.startsWith("DIRECT-") -> CheckResult(
+                id = "ssid_advertisement",
+                label = "Legacy Wi-Fi SSID advertisement",
+                status = CheckStatus.WARN,
+                detail = "Group SSID '$ssid' does NOT start with DIRECT- — ordinary Wi-Fi clients identify joinable P2P groups by that prefix. Report this.",
+            )
+            freq != null && freq >= 4900 -> CheckResult(
+                id = "ssid_advertisement",
+                label = "Legacy Wi-Fi SSID advertisement",
+                status = CheckStatus.WARN,
+                detail = "SSID '$ssid' is advertised on ${freq} MHz (5 GHz). 2.4 GHz-only legacy clients may never see it — try Mode A (forced 2.4 GHz) or Mode B.",
+            )
+            else -> CheckResult(
+                id = "ssid_advertisement",
+                label = "Legacy Wi-Fi SSID advertisement",
+                status = CheckStatus.PASS,
+                detail = "SSID '$ssid'${freq?.let { " on ${it} MHz" } ?: ""} with WPA2 — the shape legacy clients expect to see in the ordinary Wi-Fi network list. (This does NOT prove any client joined.)",
+            )
+        }
+    }
+
+    private fun checkGroupClients(): CheckResult {
+        val s = AppState.state.value
+        if (!s.sharing) {
+            return CheckResult(
+                id = "group_clients",
+                label = "Client association",
+                status = CheckStatus.INFO,
+                detail = "Not sharing right now.",
+            )
+        }
+        return if (s.clientsConnected > 0) CheckResult(
+            id = "group_clients",
+            label = "Client association",
+            status = CheckStatus.PASS,
+            detail = "${s.clientsConnected} device(s) associated with the group. Internet still depends on the proxy checks below.",
+        ) else CheckResult(
+            id = "group_clients",
+            label = "Client association",
+            status = CheckStatus.INFO,
+            detail = "No client is associated yet. For discovery/join testing: connect the client to the group, then re-run Checks.",
         )
     }
 

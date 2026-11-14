@@ -151,6 +151,28 @@ answer either way.
    the service stops itself. Start/Stop cycles are race-safe via a generation token
    (`SessionGuard`): a stale callback can never tear down a newer session.
 
+## Group creation modes (v1.2.4 A/B experiment)
+
+Settings selects how the GO group is configured, per session (switching stops the previous
+group first; never competing groups):
+
+- **Mode A** (default, baseline): `WifiP2pConfig.Builder` with custom `DIRECT-xxxxxx` network
+  name, 16-char passphrase, `GROUP_OWNER_BAND_2GHZ` forced, `enablePersistentMode(false)`,
+  `groupOwnerIntent = 15` (API 29+; on pre-29 the legacy overload is used with no config).
+- **Mode B** (system-managed): `createGroup(channel, listener)` — no `WifiP2pConfig` at all.
+  Android/Samsung generates everything. SSID, passphrase, frequency, security type,
+  interface and client list are read back via `requestGroupInfo()`; `null` means the OS
+  hides it — never invented.
+- **Mode C**: custom credentials, default band (2.4 GHz NOT forced), persistent off,
+  intent 15 — isolates a forced-band interaction on this firmware.
+
+Motivation: on the M01, the GO group is visible via P2P peer discovery on the M36 but does
+not appear in its ordinary Wi‑Fi network list, while M36 hosting works and NetShare
+reportedly works — suggesting a firmware-level issue with one specific configuration path.
+Modes A/B/C isolate custom-credentials vs forced-band vs system-managed behaviour. The
+decision data comes from Diagnostics (`group_mode`, `ssid_advertisement`, `group_clients`)
+and the dashboard. Hardware results must come from real devices, not from CI.
+
 ## What the client must do (and why)
 
 The group has no route to the internet. The only way out is the proxy. Therefore the client

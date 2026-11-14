@@ -107,7 +107,8 @@ docs: README.md, BUILDING.md, NETWORK_ARCHITECTURE.md, TROUBLESHOOTING.md, PRIVA
 - Real P2P interface / IPv4 discovery; proxy bound to that interface only (fails closed otherwise).
 - Upstream-loss detection during a session (dedicated `NetworkCallback`) with an explicit "Upstream unavailable" state; automatic resume when Wi‑Fi returns; never a cellular fallback.
 - Group-loss detection (framework broadcast + per-second read-back): the UI never keeps showing "Sharing" after the group disappears — it fails closed. Immediately before the proxy is advertised, group formation is re-verified; a vanished group tears the bind down.
-- Plain-HTTP diagnostic speaks to the local proxy over a raw socket in absolute-form (no cleartext opt-out needed, API 36 safe); HTTPS diagnostic unchanged.
+- Plain-HTTP diagnostic speaks to the local proxy over a raw socket in absolute-form (no cleartext opt-out needed, API 36 safe); HTTPS diagnostic unchanged; requires exactly HTTP 204 (proxy 502/503/504 are failures).
+- Selectable Wi‑Fi Direct group creation mode (A: custom 2.4 GHz · B: system-managed · C: custom credentials + default band) to debug Samsung GO interoperability.
 - Live session counters: bytes up/down, request counts, CONNECT tunnels, active connections, clients in group, clients seen (10-min window), uptime.
 - Persistent foreground notification with live status and a Stop action; partial wake lock with 8 h cap.
 - Client Guide screen: per-OS proxy setup, PAC URL, QR of the PAC URL, copy buttons.

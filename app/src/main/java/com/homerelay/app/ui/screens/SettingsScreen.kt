@@ -36,6 +36,7 @@ import androidx.compose.foundation.clickable
 import com.homerelay.app.data.Settings
 import com.homerelay.app.data.ThemeChoice
 import com.homerelay.app.data.Validation
+import com.homerelay.app.util.GroupCreationMode
 import com.homerelay.app.ui.InfoRow
 import com.homerelay.app.ui.SectionCard
 import com.homerelay.app.ui.WarningBanner
@@ -50,6 +51,7 @@ fun SettingsScreen(
     onShowPassphraseChange: (Boolean) -> Unit,
     onClearData: () -> Unit,
     onOpenAppDetails: () -> Unit,
+    onGroupCreationModeChange: (GroupCreationMode) -> Unit,
 ) {
     val context = LocalContext.current
     var portText by remember(settings.proxyPort) { mutableStateOf(settings.proxyPort.toString()) }
@@ -129,6 +131,42 @@ fun SettingsScreen(
         }
 
         item {
+            SectionCard(title = "Wi-Fi Direct group mode (experimental)") {
+                Text(
+                    "Which configuration the sharing group is created with. Switching while sharing is active stops the current group first; the mode applies to the next session. If the M36 cannot see the M01's group in its ordinary Wi-Fi list, try Mode B, then Mode C, and compare.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                GroupCreationMode.values().forEach { mode ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onGroupCreationModeChange(mode) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        RadioButton(
+                            selected = settings.groupCreationMode == mode,
+                            onClick = { onGroupCreationModeChange(mode) },
+                        )
+                        Column(Modifier.padding(start = 4.dp)) {
+                            Text(mode.label(), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                mode.description(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Credentials are never logged. Mode B never invents credentials — anything Android hides stays hidden.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
             SectionCard(title = "One UI battery & background limits") {
                 Text(
                     "Samsung One UI can defer or stop background sharing. For the best chance of staying alive:\n" +
@@ -175,7 +213,7 @@ fun SettingsScreen(
 
         item {
             SectionCard(title = "About") {
-                InfoRow("Version", "1.1.0 (build 2)")
+                InfoRow("Version", "1.2.4 (build 7)")
                 InfoRow("Package", "com.homerelay.app")
                 InfoRow("License", "MIT")
                 InfoRow("Source", "github.com/prr006/homerelay")

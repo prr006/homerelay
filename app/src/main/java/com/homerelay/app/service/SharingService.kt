@@ -26,6 +26,7 @@ import com.homerelay.app.net.UpstreamConnector
 import com.homerelay.app.net.UpstreamSelector
 import com.homerelay.app.p2p.P2pGroupController
 import com.homerelay.app.p2p.P2pGroupState
+import com.homerelay.app.util.GroupCreationMode
 import com.homerelay.app.proxy.ProxyServer
 import com.homerelay.app.state.AppState
 import com.homerelay.app.state.SharingPhase
@@ -142,6 +143,9 @@ class SharingService : Service() {
             return
         }
 
+        // Remove any group left over from a previous session BEFORE creating another —
+        // switching the creation mode must never produce competing groups.
+        p2p.stop()
         val sessionId = session.bump()
         pinnedNetwork = upstream
         PinnedUpstream.network = upstream
@@ -161,6 +165,7 @@ class SharingService : Service() {
                 clientsConnected = 0,
                 bindAddress = null,
                 pacUrl = null,
+                groupCreationMode = settings.groupCreationMode.describe(),
             )
         }
         startForegroundCompat(buildNotification(getString(R.string.notification_title),
@@ -170,8 +175,8 @@ class SharingService : Service() {
     }
 
     private suspend fun runSession(settings: com.homerelay.app.data.Settings, sessionId: Long, upstream: Network) {
-        // 1. Wi-Fi Direct group (Group Owner)
-        p2p.start()
+        // 1. Wi-Fi Direct group (Group Owner) — mode chosen in Settings (v1.2.4 A/B experiment)
+        p2p.start(settings.groupCreationMode)
         val groupState: P2pGroupState? = withTimeoutOrNull(20_000) {
             var result: P2pGroupState? = null
             while (result == null) {
@@ -332,6 +337,7 @@ class SharingService : Service() {
                 groupFrequencyMhz = active.frequencyMhz,
                 groupSecurityType = active.securityType,
                 groupIsGroupOwner = active.isGroupOwner,
+                groupCreationMode = settings.groupCreationMode.describe(),
                 upstreamSurvivedGroupCreation = true,
                 clientsConnected = active.clientCount,
                 proxyPort = boundPort,

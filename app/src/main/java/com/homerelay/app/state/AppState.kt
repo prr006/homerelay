@@ -35,6 +35,8 @@ data class SharingUiState(
     val groupIsGroupOwner: Boolean? = null,
     /** True when the upstream home Wi-Fi was still alive immediately after the group was created. Null if untested. */
     val upstreamSurvivedGroupCreation: Boolean? = null,
+    /** v1.2.4: which group creation mode this session used (e.g. "A · Custom SSID, 2.4 GHz (default)"); null when idle. */
+    val groupCreationMode: String? = null,
     /** Clients currently in the group (from requestGroupInfo). */
     val clientsConnected: Int = 0,
     val bindAddress: String? = null,
@@ -72,7 +74,7 @@ object AppState {
 
     fun reset() {
         val port = _state.value.proxyPort
-        _state.value = SharingUiState(proxyPort = port)
+        _state.value = SharingUiState(proxyPort = port) // groupCreationMode resets to null with the rest
     }
 
     fun applySnapshot(snapshot: ProxyStats.Snapshot, port: Int) {

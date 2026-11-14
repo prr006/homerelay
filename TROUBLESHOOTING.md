@@ -4,6 +4,38 @@ Real fixes for the failures a HomeRelay user can actually hit. Ordered roughly b
 If something here is wrong or incomplete, open an issue with your device model, Android/One UI
 build, and the exact error text from the app — not guesses.
 
+## M01 hosts, M36 cannot see the network (v1.2.4 A/B experiment)
+
+Evidence: M36-hosted HomeRelay works (M01 discovers, joins, plays). M01-hosted HomeRelay is
+invisible in the M36's ordinary Wi‑Fi list, even though the group is created and the M36 can
+see the M01 in Wi‑Fi Direct peer discovery. NetShare allowed the M01 to host.
+
+**Settings → Wi‑Fi Direct group mode (experimental)** in v1.2.4 offers three modes. Stop
+sharing, switch, start again — one mode per session, the previous group is removed first:
+
+- **Mode A** (default): custom `DIRECT-xxxxxx` + passphrase, 2.4 GHz forced,
+  `groupOwnerIntent=15`, persistent off — the v1.2.x baseline.
+- **Mode B**: system-managed group; Android/Samsung generates the credentials and
+  configuration. No custom SSID/band. If Samsung's own implementation hosts a normal
+  network, this mode should behave closest to NetShare.
+- **Mode C**: custom credentials but the framework default band (no forced 2.4 GHz) —
+  isolates a bad forced-2.4 GHz interaction on this firmware.
+
+Test procedure on the M01:
+
+1. Install v1.2.4; connect M01 to home Wi‑Fi; start sharing in Mode A; note SSID/frequency
+   on the dashboard; on the M36, check (a) Wi‑Fi Direct peer list, (b) ordinary Wi‑Fi list.
+2. If invisible in the ordinary list, stop, switch to Mode B, repeat. Then Mode C.
+3. Record per mode: Checks → group_mode, group_created, group_owner, ssid_advertisement,
+   group_interface, group_ip, group_clients, upstream_survived, plus the dashboard
+   frequency/security/SSID readout.
+4. Pass/fail per mode: the M36 can see the SSID in its ordinary list, joins, and loads
+   media through the proxy (verify proxy_listen, http_via_proxy (204), https_via_proxy).
+5. If none of the modes works, the limitation is firmware-level on the M01 GO path
+   (creation succeeds but beaconing/advertising to legacy clients is broken). Report the
+   dumpsys output and the per-mode Checks; do not blame the proxy — the proxy binds to the
+   real group interface regardless of mode.
+
 ## v1.2.2 fix — "Cleartext HTTP traffic to connectivitycheck.gstatic.com not permitted"
 
 v1.2.1's plain-HTTP check used `HttpURLConnection` to an `http://` URL. API 36 blocks

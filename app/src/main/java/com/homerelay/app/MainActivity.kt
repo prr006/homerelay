@@ -265,6 +265,14 @@ private fun HomeRelayApp(
                         settingsStore.setShowPassphrase(enabled)
                         onSettingsChanged()
                     },
+                    onGroupCreationModeChange = { mode ->
+                        settingsStore.setGroupCreationMode(mode)
+                        onSettingsChanged()
+                        // Switching modes must not leave competing groups: stop any active
+                        // session before the next one is created with the new configuration.
+                        val s = AppState.state.value
+                        if (s.sharing || s.busy) sendServiceAction(SharingService.ACTION_STOP)
+                    },
                     onClearData = {
                         settingsStore.clearAll()
                         onThemeChange(ThemeChoice.SYSTEM)
