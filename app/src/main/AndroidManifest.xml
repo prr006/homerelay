@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
+    <!-- Wi-Fi Direct is optional at install time: the app lives on the client side too and
+         reports a clear error at runtime when it is missing (see Checks screen). -->
+    <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
 
     <!-- Core connectivity -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -56,7 +59,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Shares the phone's upstream Wi-Fi internet connection with nearby devices over a local-only hotspot using an on-device HTTP proxy. No data is relayed off-device." />
+                android:value="Shares the phone's upstream Wi-Fi internet connection with nearby devices over a Wi-Fi Direct group (Group Owner) using an on-device HTTP proxy. No data is relayed off-device." />
         </service>
     </application>
 </manifest>

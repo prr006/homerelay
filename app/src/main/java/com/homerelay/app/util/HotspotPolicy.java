@@ -5,17 +5,18 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Pure, framework-free permission policy for the local-only hotspot path.
+ * Pure, framework-free permission policy for the Wi-Fi Direct (Group Owner) sharing path.
  *
- * Why this exists: on Android 12 (and below) the system refuses
- * {@code WifiManager.startLocalOnlyHotspot()} unless the caller holds a location permission
- * (the system error names "coarse/fine location"). On Android 13+ the location requirement was
- * replaced by NEARBY_WIFI_DEVICES with {@code neverForLocation}. This class encodes exactly that
- * mapping so the runtime flow, the service pre-check and the diagnostics screen all agree —
- * and so the behaviour is regression-testable on the JVM.
+ * Why this exists: on Android 12 (and below) the system refuses Wi-Fi Direct group creation
+ * unless the caller holds a location permission (the same matrix applies to
+ * {@code WifiManager.startLocalOnlyHotspot()} and {@code WifiP2pManager.createGroup()}).
+ * On Android 13+ the location requirement is replaced by NEARBY_WIFI_DEVICES with
+ * {@code neverForLocation}. This class encodes exactly that mapping so the runtime flow,
+ * the service pre-check and the diagnostics screen all agree — and so the behaviour is
+ * regression-testable on the JVM.
  *
- * <p>Canonical sources: Android developer documentation for
- * {@code WifiManager.startLocalOnlyHotspot} and the runtime permissions table for Wi-Fi APIs.
+ * <p>Canonical sources: Android developer documentation for Wi-Fi Direct
+ * ({@code WifiP2pManager}) and the runtime permissions table for Wi-Fi APIs.
  */
 public final class HotspotPolicy {
     private HotspotPolicy() {}
@@ -29,7 +30,7 @@ public final class HotspotPolicy {
     public static final int SDK_NEARBY_WIFI = 33;
 
     /**
-     * True iff the hotspot may be requested on this SDK level.
+     * True iff a Wi-Fi Direct group may be requested on this SDK level.
      * Android ≤ 12: coarse OR fine location — matching the exact text of the
      * system refusal message ("doesn't have coarse/fine location permission").
      * Android 13+: NEARBY_WIFI_DEVICES.
@@ -44,7 +45,7 @@ public final class HotspotPolicy {
 
     /**
      * Permissions that still need to be requested at runtime to unlock the hotspot.
-     * Returns an empty list when the hotspot may be requested now.
+     * Returns an empty list when the group may be requested now.
      * Android ≤ 12: requests fine location (and coarse as fallback) — the system dialog only
      * ever needs to appear once. Android 13+: requests NEARBY_WIFI_DEVICES only.
      */

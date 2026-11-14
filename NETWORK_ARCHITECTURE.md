@@ -15,18 +15,46 @@ client association on the same radio, and there is no supported "Wi‑Fi repeate
 third-party apps. The supported APIs are:
 
 1. `WifiManager.startLocalOnlyHotspot(callback, handler)` — an app-created hotspot. On
-   Android 10+ the **system** assigns a random SSID and passphrase every activation
-   (Android 12+). It carries **no DHCP/NAT by itself** and is explicitly *local-only*: it does
-   not route to the upstream network.
-2. `SoftApConfiguration` (Android 11+) — read-only view of what the system created (SSID,
-   passphrase, BSSID, security type). HomeRelay uses it to show you the credentials.
-3. Tethering APIs (`ConnectivityManager` / `TetheringManager`, privileged) — **not available**
-   to normal apps; they require `TETHERING`-class permissions held by system apps only.
+   Android 10+ the **system** assigns a random SSID and passphrase every activation. It
+   carries **no DHCP/NAT by itself** and is explicitly *local-only*. HomeRelay used this in
+   v1.0–v1.1; it is removed in v1.2.0 in favour of Wi‑Fi Direct, which allows fresh,
+   app-chosen credentials and standard legacy-client join semantics.
+2. `WifiP2pManager.createGroup(...)` — **the v1.2.0 path.** Creates a P2P group with this
+   device as Group Owner. The group *can* carry legacy (non-P2P) Wi‑Fi clients — i.e. a plain
+   phone joining an SSID with a WPA2 password — which is exactly what the M36 does.
+   - API 29+: `createGroup(channel, config, listener)` with a `WifiP2pConfig.Builder`
+     configuration (network name `DIRECT-<2 chars><4 chars>` from `[A-Za-z0-9]`, passphrase
+     8–63 printable ASCII, 2.4 GHz GO band, persistent mode off, group-owner intent 15).
+     HomeRelay generates fresh credentials per session — they are never reused or persisted.
+   - API 26–28: legacy `createGroup(channel, listener)` overload; the system assigns the
+     credentials, which HomeRelay reads back via `requestGroupInfo()`.
+3. Tethering APIs (`TetheringManager`, privileged) — **not available** to normal apps.
 4. `VpnService` — can intercept the phone's own traffic, not other devices' traffic, and is a
    poor fit for sharing; HomeRelay does not use it.
-5. Wi‑Fi Direct — device-to-device, not internet sharing; not used.
 
-So the only legitimate shape is NetShare-style: **hotspot + on-device proxy**.
+So the only legitimate shape is NetShare-style: **Wi‑Fi Direct Group Owner + on-device proxy**.
+
+## The critical caveat: STA + P2P concurrency
+
+Both the home Wi‑Fi association and the P2P group live in the **same Wi‑Fi chip**. Whether a
+given firmware can run a STA association and a P2P Group Owner role simultaneously is a
+hardware/driver/ROM question — the public APIs do not guarantee it, and this document does not
+assume it. What HomeRelay does about it:
+
+1. It selects the upstream home Wi‑Fi `Network` **before** the group is created and keeps that
+   exact object. The P2P group's network carries `TRANSPORT_WIFI` too, so it is explicitly
+   rejected by interface name (`p2p*`, `softap*`, …) and by object identity — the pre-creation
+   pin can never be the group.
+2. Immediately after group formation it re-checks the pinned network. If it is gone or no
+   longer Wi‑Fi, the session **fails closed** with an explicit message and Diagnostics records
+   `upstream_survived = FAIL` — no proxy, no fake "sharing" state, no mobile-data fallback.
+3. During the session a dedicated `NetworkCallback` on the pinned network flips the UI to
+   **Upstream unavailable** the moment it degrades or vanishes, and back to sharing when it
+   validates again. Nothing ever reroutes to cellular or to the P2P network.
+
+Whether the SM-M015G/DS on One UI 4.1 passes this test is **not known** (no hardware has been
+available to the author). The diagnostics are built so the first person to run it gets a clear
+answer either way.
 
 ## What HomeRelay does, step by step
 
@@ -36,63 +64,74 @@ So the only legitimate shape is NetShare-style: **hotspot + on-device proxy**.
         ┌──────┴───────┐
         │ Home router  │
         └──────┬───────┘
-               │ Wi‑Fi (upstream, DHCP, internet)
+               │ Wi‑Fi STA (upstream, pinned Network object)
         ┌──────┴───────────────────┐
         │  Galaxy M01 (HomeRelay)  │
         │                          │
         │  ┌────────────────────┐  │
         │  │ ProxyServer :8080  │  │  HTTP proxy + CONNECT tunnel
-        │  │ bound to hotspot   │  │  + /proxy.pac + /status.json
+        │  │ bound to the group │  │  + /proxy.pac + /status.json
         │  │ interface only     │  │  + tiny status page
         │  └──────┬─────────────┘  │
         │         │ upstream sockets via Network.socketFactory
-        │         │ DNS via Network.getAllByName — both pinned to Wi‑Fi
+        │         │ DNS via Network.getAllByName — both pinned to the upstream network
         │         ▼                 │
         │  ┌────────────────────┐  │
-        │  │ LocalOnlyHotspot   │  │  Android picks SSID/password
+        │  │ Wi‑Fi Direct group │  │  DIRECT-xxxxxx, WPA2, app-generated per session
+        │  │ (Group Owner)      │  │  interface/IP discovered, never hardcoded
         │  └──────┬─────────────┘  │
         └─────────┼────────────────┘
-                  │ Wi‑Fi (hotspot, WPA2/WPA3, no internet of its own)
+                  │ Wi‑Fi (legacy client join, WPA2)
         ┌─────────┴─────────┐
-        │ Galaxy M36 (client)│  Wi‑Fi proxy = 192.168.x.y:8080 (manual or PAC)
+        │ Galaxy M36 (client)│  Wi‑Fi proxy = group IP:8080 (manual or PAC)
         └───────────────────┘
 ```
 
-1. **You connect the phone to home Wi‑Fi** exactly as usual. HomeRelay observes the upstream
-   network (`ConnectivityManager`), prefers the validated Wi‑Fi network, and detects when only
-   cellular is active (and warns).
+1. **You connect the phone to home Wi‑Fi** exactly as usual. HomeRelay enumerates networks
+   (`ConnectivityManager.allNetworks`), rejects cellular and any P2P/SoftAP-interface network,
+   prefers the validated home Wi‑Fi network, and keeps that `Network` object.
 2. **Start sharing** → `SharingService` (foreground service, `specialUse` type, persistent
-   notification with a Stop action) calls `startLocalOnlyHotspot`. Android creates the hotspot
-   and reports the credentials through `LocalOnlyHotspotCallback`.
-3. HomeRelay locates the hotspot's interface/IPv4 (`HotspotInterfaceLocator`) and binds the
-   proxy to **that address only**. If the hotspot interface cannot be identified with
-   confidence, binding **fails closed** — the proxy never falls back to 0.0.0.0.
-4. The proxy (`proxy/ProxyServer.java`) speaks:
-   - **HTTP forwarding** to absolute-URI requests (`GET http://example.com/ HTTP/1.1`),
-   - **CONNECT tunneling** (`CONNECT host:443 HTTP/1.1`) with raw byte relay —
-     used for HTTPS; bytes are never parsed or decrypted,
-   - a GET on `/proxy.pac` serving a PAC whose single rule is
-     `PROXY <bind-address>:<port>; DIRECT` — note the `DIRECT` fallback is intentional so
-     clients don't hard-fail on non-proxyable schemes (see the PAC caveat below),
-   - `/status.json` and a plain GET `/` status page (no internals beyond name+counters).
-5. **Every outbound socket and every DNS lookup** from the proxy goes through the Wi‑Fi
-   `Network` object (`UpstreamConnector`): `network.socketFactory.createSocket()` and
+   notification with a Stop action) creates the Wi‑Fi Direct group via `P2pGroupController`
+   (`WifiP2pManager.createGroup`). Fresh `DIRECT-xxxxxx` credentials are generated per session.
+   Group state is read back from the framework via `requestGroupInfo()` (interface name,
+   frequency, security type, passphrase, client list) and `requestConnectionInfo()`
+   (`groupFormed`, `isGroupOwner`, `groupOwnerAddress`) — **nothing is hardcoded**, and
+   `192.168.49.1` is never assumed.
+3. **The pinned network is re-validated** after group formation (see the caveat above). If it
+   did not survive, the session fails and the group is removed.
+4. HomeRelay binds the proxy to **the group's IPv4 address only**. If it cannot be discovered,
+   binding **fails closed** — the proxy never falls back to 0.0.0.0.
+5. The proxy (`proxy/ProxyServer.java`) speaks:
+   - **HTTP forwarding** to absolute-URI requests,
+   - **CONNECT tunneling** with raw byte relay — used for HTTPS; bytes are never parsed or decrypted,
+   - `GET /proxy.pac` (`PROXY <bind-address>:<port>; DIRECT` — the `DIRECT` fallback is
+     intentional so clients don't hard-fail on non-proxyable schemes),
+   - `/status.json` and a plain GET `/` status page.
+6. **Every outbound socket and every DNS lookup** from the proxy goes through the pinned
+   upstream `Network` (`UpstreamConnector`): `network.socketFactory.createSocket()` and
    `network.getAllByName(host)`. There is **no code path that opens an upstream connection
-   over cellular**. If Wi‑Fi disappears, requests fail with an error instead of using mobile
-   data. (Cellular being merely *on* is fine and common; HomeRelay only requires that Wi‑Fi
-   exists to send traffic.)
-6. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
+   over cellular or over the P2P group**. If the pinned network is lost, requests fail with an
+   error instead of using mobile data — and the UI shows **Upstream unavailable** until the
+   home Wi‑Fi returns and re-validates.
+7. Client membership is read back each second (`requestGroupInfo`), so the dashboard and the
+   notification always reflect the real group: waiting for a client → client(s) connected.
+   If the group disappears (system removes it, Wi‑Fi toggles, a conflicting P2P app runs),
+   the reader sees `null` and the session fails closed — **the UI never keeps showing
+   “sharing” without a group**.
+8. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
    tunnel counts, active connections, and distinct client IPs seen in a rolling 10-minute
-   window. All of it is in-memory, reset per session, and shown live in the UI and in the
-   notification.
-7. **Stop sharing** — from the app or the notification — stops the proxy, releases the
-   hotspot reservation, releases the wake lock, and the foreground service stops itself.
+   window. All of it is in-memory, reset per session.
+9. **Stop sharing** — from the app or the notification — stops the proxy, removes the P2P
+   group (`removeGroup`), unregisters the pinned-network callback, releases the wake lock, and
+   the service stops itself. Start/Stop cycles are race-safe via a generation token
+   (`SessionGuard`): a stale callback can never tear down a newer session.
 
 ## What the client must do (and why)
 
-The hotspot has no route to the internet. The only way out is the proxy. Therefore the client
-must tell its apps to use it: on Android, Settings → Wi‑Fi → network → Advanced → Proxy. That
-setting is honored by the browser and by most (not all) apps — see "Proxy limits" below.
+The group has no route to the internet. The only way out is the proxy. Therefore the client
+must tell its apps to use it: on Android, Settings → Wi‑Fi → the DIRECT-xxxxxx network →
+Advanced → Proxy. That setting is honored by the browser and by most (not all) apps — see
+"Proxy limits" below.
 
 PAC (`/proxy.pac`) is served so clients that support "Proxy auto-config" can fetch the
 same settings automatically each time they join. **No app and no QR code can set a Wi‑Fi proxy
@@ -101,16 +140,16 @@ verify it from a browser; auto-configuration is not claimed, because it isn't po
 
 ## Proxy limits (inherent, not bugs)
 
-- **Apps that ignore the Wi‑Fi proxy get zero internet** through this hotspot. Some games,
+- **Apps that ignore the Wi‑Fi proxy get zero internet** through this group. Some games,
   VPN apps, and "direct-connection" apps bypass proxy settings by design.
 - **HTTPS works, blind** — CONNECT tunnels are opaque; TLS certificates remain end-to-end.
   Anything that requires inspecting content (rare) cannot work through any proxy.
 - **UDP is not relayed** (proxy is TCP). Things like QUIC fall back to TCP for clients that
   support it; hard-UDP-only protocols fail.
-- **No per-client bandwidth limits, no auth.** Anyone who joins the hotspot can use the proxy
-  while it is running. Stop sharing when you are done, and use the Android-assigned WPA2/WPA3
+- **No per-client bandwidth limits, no auth.** Anyone who joins the group can use the proxy
+  while it is running. Stop sharing when you are done, and use the per-session WPA2
   password as your access control.
-- **LocalOnlyHotspot throughput** depends on the phone chip and antenna — typically fine for
+- **Wi‑Fi Direct throughput** depends on the phone chip and antenna — typically fine for
   browsing/streaming, well below modern router AP rates, and the M01 is a 2019 entry-level
   device.
 
@@ -120,8 +159,8 @@ verify it from a browser; auto-configuration is not claimed, because it isn't po
 |---|---|---|
 | Proxy sharing | Client sets HTTP proxy; traffic relayed by app | **This.** |
 | PAC auto-config | Client fetches `FindProxyForURL` script from a URL | Supported (`/proxy.pac`) |
-| Hotspot | Wi‑Fi AP created by the phone | Yes — local-only, Android-generated credentials |
-| Same SSID/password | Two APs sharing name+ passphrase | Possible to mimic manually; **not automatic, not mesh, no roaming, no bridging** |
+| Wi‑Fi Direct group | Wi‑Fi AP created by the phone as Group Owner | **This** — app-generated `DIRECT-xxxxxx` credentials per session |
+| Same SSID/password | Two APs sharing name+passphrase | Not how the group works; the group has its own per-session credentials; **not mesh, no roaming, no bridging** |
 | Mesh / roaming | Seamless L2 handoff across nodes | **Impossible** for a stock app |
 | Transparent repeater | Client unaware; L2/L3 relay | **Impossible** without root; not this |
 | Transparent proxy at OS level | All traffic hijacked | Not on stock Android for third-party apps; not used |

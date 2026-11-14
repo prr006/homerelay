@@ -16,11 +16,11 @@ android {
 
     defaultConfig {
         applicationId = "com.homerelay.app"
-        // LocalOnlyHotspot public API requires API 26 (Android 8.0+).
+        // Wi-Fi Direct (WifiP2pManager) is API 14+; NEARBY_WIFI_DEVICES requires API 33 maxSdk handling. API 26 kept as minSdk.
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     signingConfigs {

@@ -7,6 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -16,47 +19,54 @@ import androidx.core.app.ServiceCompat
 import com.homerelay.app.MainActivity
 import com.homerelay.app.R
 import com.homerelay.app.data.SettingsStore
-import com.homerelay.app.hotspot.HotspotState
-import com.homerelay.app.hotspot.LocalOnlyHotspotController
-import com.homerelay.app.net.HotspotInterfaceLocator
+import com.homerelay.app.net.PinnedUpstream
 import com.homerelay.app.net.UpstreamConnector
+import com.homerelay.app.net.UpstreamSelector
+import com.homerelay.app.p2p.P2pGroupController
+import com.homerelay.app.p2p.P2pGroupState
 import com.homerelay.app.proxy.ProxyServer
 import com.homerelay.app.state.AppState
 import com.homerelay.app.state.SharingPhase
+import com.homerelay.app.util.SessionGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Foreground service that owns the whole sharing session:
- *   local-only hotspot  ->  find its interface  ->  proxy bound to that interface only
+ *   pin the home Wi-Fi upstream  ->  Wi-Fi Direct group (Group Owner)
+ *   ->  proxy bound to the group's interface only, egress pinned to the upstream network
  *
  * Design rules honoured here:
- *  - Outbound sockets go ONLY to the upstream Wi-Fi network (see UpstreamConnector).
- *  - The proxy binds ONLY to the hotspot interface — never to the upstream network.
- *  - If the hotspot interface cannot be identified, the proxy is not started.
- *  - The service is started by the user and stopped by the user (or when the system kills it).
- *    It never restarts after reboot and never runs without a visible notification.
+ *  - Outbound sockets go ONLY to the upstream home Wi-Fi network pinned *before* the group
+ *    is created (see UpstreamConnector). Never mobile data, never the P2P network.
+ *  - The proxy binds ONLY to the group's interface address — never 0.0.0.0, never upstream.
+ *  - If the upstream network cannot be pinned, no group is created and sharing does not start.
+ *  - If creating the group kills the upstream Wi-Fi (firmware without STA+P2P concurrency),
+ *    the session fails clearly and Diagnostics records the evidence. No false success.
+ *  - "Sharing" is never displayed after the group disappears.
  */
 class SharingService : Service() {
 
-    private lateinit var hotspot: LocalOnlyHotspotController
+    private lateinit var p2p: P2pGroupController
     private var proxy: ProxyServer? = null
     private var tickJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var upstreamCallback: ConnectivityManager.NetworkCallback? = null
+    private var pinnedNetwork: Network? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val sessionCounter = java.util.concurrent.atomic.AtomicLong(0L)
+    private val session = SessionGuard()
+    private var tickCount = 0
 
     override fun onCreate() {
         super.onCreate()
-        hotspot = LocalOnlyHotspotController(this)
+        p2p = P2pGroupController(this)
         createNotificationChannel()
     }
 
@@ -74,6 +84,7 @@ class SharingService : Service() {
 
     override fun onDestroy() {
         stopSharing()
+        p2p.dispose()
         scope.cancel()
         super.onDestroy()
     }
@@ -88,17 +99,15 @@ class SharingService : Service() {
 
     private fun startSharing() {
         val current = AppState.state.value
-        if (current.phase == SharingPhase.Sharing || current.busy) return
+        if (current.phase == SharingPhase.Sharing || current.phase == SharingPhase.UpstreamUnavailable || current.busy) return
 
-        // Never ask the system for a hotspot we are not allowed to have — the system
-        // refuses with "doesn't have coarse/fine location permission" and the failure
-        // surfaces later, disconnected from the cause. Fail fast with a clear message.
-        if (!com.homerelay.app.util.HotspotPermissions.hasHotspotPermission(this)) {
+        // Never ask the system for a group we are not allowed to have — fail fast with a clear message.
+        if (!com.homerelay.app.util.SharingPermissions.hasHotspotPermission(this)) {
             val label = if (Build.VERSION.SDK_INT >= 33) "Nearby devices (Wi-Fi)" else "Location"
             AppState.update {
                 it.copy(
                     phase = SharingPhase.Failed,
-                    errorMessage = "Android requires the $label permission for the hotspot. " +
+                    errorMessage = "Android requires the $label permission for Wi-Fi Direct. " +
                         "Grant it in the system dialog or App info → Permissions, then press Start sharing again.",
                 )
             }
@@ -111,70 +120,132 @@ class SharingService : Service() {
             return
         }
 
-        val session = sessionCounter.incrementAndGet()
+        // Pin the upstream BEFORE the group exists. This is the whole trick: this exact
+        // Network object remains the only route proxy traffic may take.
+        val upstream = UpstreamSelector.selectPinnedUpstream(this)
+        if (upstream == null) {
+            AppState.update {
+                it.copy(
+                    phase = SharingPhase.Failed,
+                    errorMessage = "No upstream Wi-Fi network was found. Connect the phone to your home Wi-Fi first — " +
+                        "HomeRelay shares Wi-Fi, never mobile data, and it cannot create the group without the network it must relay.",
+                )
+            }
+            startForegroundCompat(buildNotification(getString(R.string.notification_title),
+                "Sharing not started — no upstream Wi-Fi"))
+            scope.launch {
+                delay(4_000)
+                stopSelfAndClean()
+            }
+            return
+        }
+
+        val sessionId = session.bump()
+        pinnedNetwork = upstream
+        PinnedUpstream.network = upstream
         val settings = SettingsStore(this).load()
         AppState.update {
             it.copy(
-                phase = SharingPhase.StartingHotspot,
+                phase = SharingPhase.Starting,
                 errorMessage = null,
                 proxyPort = settings.proxyPort,
-                hotspotSsid = null,
-                hotspotPassphrase = null,
+                p2pSsid = null,
+                p2pPassphrase = null,
+                groupInterfaceName = null,
+                groupFrequencyMhz = null,
+                groupSecurityType = null,
+                groupIsGroupOwner = null,
+                upstreamSurvivedGroupCreation = null,
+                clientsConnected = 0,
                 bindAddress = null,
                 pacUrl = null,
             )
         }
         startForegroundCompat(buildNotification(getString(R.string.notification_title),
-            getString(R.string.notification_channel_name)))
+            "Starting Wi-Fi Direct group…"))
 
-        scope.launch { runSession(settings, session) }
+        scope.launch { runSession(settings, sessionId, upstream) }
     }
 
-    private suspend fun runSession(settings: com.homerelay.app.data.Settings, session: Long) {
-        // 1. Hotspot
-        hotspot.start()
-        val terminal = withTimeoutOrNull(15_000) {
-            hotspot.state.first {
-                it is HotspotState.Active || it is HotspotState.Failed || it is HotspotState.Idle
+    private suspend fun runSession(settings: com.homerelay.app.data.Settings, sessionId: Long, upstream: Network) {
+        // 1. Wi-Fi Direct group (Group Owner)
+        p2p.start()
+        var groupState: P2pGroupState? = null
+        withTimeoutOrNull(20_000) {
+            while (true) {
+                if (!session.isCurrent(sessionId)) return
+                p2p.refresh()
+                when (val s = p2p.state.value) {
+                    is P2pGroupState.Active, is P2pGroupState.Failed -> { groupState = s; break }
+                    P2pGroupState.Idle -> return // user pressed Stop
+                    else -> delay(500)
+                }
             }
         }
-        when (terminal) {
-            // User pressed Stop during startup — exit quietly, stop() already cleaned up.
-            HotspotState.Idle -> return
-            null -> fail(
-                "Hotspot did not start within 15 seconds. If you see “Caller already has an " +
-                    "active localonly hotspot request” in the logs, press Stop, wait a few " +
-                    "seconds, and start again. Otherwise try toggling Wi-Fi off and on.",
-                session,
-            )
-            is HotspotState.Failed -> fail(terminal.reason, session)
-            is HotspotState.Active -> { }
-            else -> fail("Hotspot did not start.", session)
+        val active = when (val g = groupState) {
+            is P2pGroupState.Active -> g
+            is P2pGroupState.Failed -> { fail(g.reason, sessionId); return }
+            null -> {
+                fail(
+                    "The Wi-Fi Direct group did not form within 20 seconds. Turn Wi-Fi off and on, ensure no " +
+                        "other P2P app is active, and try again. If it persists, this firmware may not support " +
+                        "group creation while on Wi-Fi — see Diagnostics.",
+                    sessionId,
+                )
+                return
+            }
+            else -> { fail("Wi-Fi Direct group did not start.", sessionId); return }
         }
-        if (sessionCounter.get() != session) return // a newer session took over while we waited
-        val active = hotspot.state.value as? HotspotState.Active ?: return
-
-        // 2. Bind address — the hotspot interface, never the upstream network.
-        val locator = HotspotInterfaceLocator.findHotspotInterface(this)
-        if (locator == null) {
+        if (!session.isCurrent(sessionId)) return // a newer session took over while we waited
+        if (!active.isGroupOwner) {
             fail(
-                "Could not identify the hotspot's interface. Candidates: " +
-                    HotspotInterfaceLocator.debugCandidateNames(this).joinToString(", ").ifEmpty { "none" } +
-                    ". Refusing to bind the proxy to all interfaces.",
-                session,
+                "Android created the group but does not report this device as its owner " +
+                    "(requestConnectionInfo → isGroupOwner=false). HomeRelay cannot share through it.",
+                sessionId,
             )
             return
         }
-        val bindAddress = locator.address.hostAddress ?: "unavailable"
-        AppState.update { it.copy(phase = SharingPhase.StartingProxy, bindAddress = bindAddress) }
 
-        // 3. Proxy — configured port first, automatic free-port fallback.
+        // 2. Did the upstream home Wi-Fi survive the group being created? This is the
+        //    make-or-break question on firmware that cannot run STA+P2P concurrently.
+        val upstreamSurvived = UpstreamSelector.isStillEligible(this, upstream)
+        AppState.update { it.copy(upstreamSurvivedGroupCreation = upstreamSurvived) }
+        if (!upstreamSurvived) {
+            fail(
+                "Creating the Wi-Fi Direct group disconnected the upstream home Wi-Fi — this firmware " +
+                    "cannot hold Wi-Fi STA and a P2P group at the same time. HomeRelay will not show a fake " +
+                    "“sharing” state or fall back to mobile data. Evidence: the pinned network is gone or no " +
+                    "longer a Wi-Fi network after group creation. See Diagnostics and NETWORK_ARCHITECTURE.md.",
+                sessionId,
+            )
+            return
+        }
+
+        // 3. Bind address — the group's own IPv4, discovered via requestConnectionInfo().
+        val bindAddress = active.groupOwnerAddress
+        if (bindAddress == null) {
+            fail(
+                "The group formed but Android did not report its owner address (requestConnectionInfo). " +
+                    "Refusing to bind the proxy to all interfaces.",
+                sessionId,
+            )
+            return
+        }
+        AppState.update {
+            it.copy(
+                phase = SharingPhase.Starting,
+                bindAddress = bindAddress,
+                groupInterfaceName = active.interfaceName,
+            )
+        }
+
+        // 4. Proxy — configured port first, automatic free-port fallback; egress pinned upstream.
         val config = ProxyServer.Config().apply {
             pacHost = bindAddress
             pacPort = settings.proxyPort
             viaHeader = "HomeRelay"
         }
-        val connector = UpstreamConnector(this)
+        val connector = UpstreamConnector(this, upstream)
         val logger = object : ProxyServer.Logger {
             override fun d(message: String) { android.util.Log.d(TAG, message) }
             override fun w(message: String) { android.util.Log.w(TAG, message) }
@@ -188,24 +259,32 @@ class SharingService : Service() {
                 server.start(listOf(bindAddress), 0)
                 server.boundPort()
             } catch (e2: Exception) {
-                fail("Proxy could not bind to $bindAddress: ${e2.message}", session)
+                fail("Proxy could not bind to $bindAddress (the group interface): ${e2.message}", sessionId)
                 return
             }
         }
         config.pacPort = boundPort
-        if (sessionCounter.get() != session) {
+        if (!session.isCurrent(sessionId)) {
             // User pressed Stop while we were binding: tear the fresh proxy down and leave.
             runCatching { server.stop() }
             return
         }
         proxy = server
 
+        registerPinnedNetworkCallback(upstream, sessionId)
+
         val pacUrl = if (settings.pacEnabled) "http://$bindAddress:$boundPort/proxy.pac" else null
         AppState.update {
             it.copy(
                 phase = SharingPhase.Sharing,
-                hotspotSsid = active.ssid,
-                hotspotPassphrase = active.passphrase,
+                p2pSsid = active.networkName,
+                p2pPassphrase = active.passphrase,
+                groupInterfaceName = active.interfaceName,
+                groupFrequencyMhz = active.frequencyMhz,
+                groupSecurityType = active.securityType,
+                groupIsGroupOwner = active.isGroupOwner,
+                upstreamSurvivedGroupCreation = true,
+                clientsConnected = active.clientCount,
                 proxyPort = boundPort,
                 bindAddress = bindAddress,
                 pacUrl = pacUrl,
@@ -219,47 +298,126 @@ class SharingService : Service() {
         }
         acquireWakeLock()
         updateNotification(getString(R.string.notification_title),
-            "Clients set their proxy to $bindAddress:$boundPort")
-        startTickLoop(server, boundPort)
+            "Group active — waiting for a client · proxy $bindAddress:$boundPort")
+        startTickLoop(server, boundPort, sessionId)
     }
 
-    private fun startTickLoop(server: ProxyServer, port: Int) {
+    private fun registerPinnedNetworkCallback(upstream: Network, sessionId: Long) {
+        unregisterPinnedNetworkCallback()
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                applyUpstreamState(validated = validated, sessionId = sessionId)
+            }
+
+            override fun onLost(network: Network) {
+                applyUpstreamState(validated = false, sessionId = sessionId, lost = true)
+            }
+        }
+        upstreamCallback = cb
+        runCatching {
+            getSystemService(ConnectivityManager::class.java).registerNetworkCallback(upstream, cb)
+        }
+    }
+
+    private fun unregisterPinnedNetworkCallback() {
+        upstreamCallback?.let { cb ->
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) }
+        }
+        upstreamCallback = null
+    }
+
+    /** Flip between Sharing and UpstreamUnavailable. Never falls back to any other network. */
+    private fun applyUpstreamState(validated: Boolean, sessionId: Long, lost: Boolean = false) {
+        if (!session.isCurrent(sessionId)) return
+        AppState.update { s ->
+            when {
+                lost -> s.phase.takeIf { it == SharingPhase.Sharing || it == SharingPhase.UpstreamUnavailable }
+                    ?.let {
+                        s.copy(
+                            phase = SharingPhase.UpstreamUnavailable,
+                            errorMessage = "The home Wi-Fi network was lost — reconnect the phone to it. " +
+                                "HomeRelay will not use mobile data; sharing resumes automatically when Wi-Fi returns.",
+                        )
+                    } ?: s
+                validated -> s.phase.takeIf { it == SharingPhase.UpstreamUnavailable }
+                    ?.let { s.copy(phase = SharingPhase.Sharing, errorMessage = null) } ?: s
+                else -> s.phase.takeIf { it == SharingPhase.Sharing }
+                    ?.let { s.copy(phase = SharingPhase.UpstreamUnavailable) } ?: s
+            }
+        }
+    }
+
+    private fun startTickLoop(server: ProxyServer, port: Int, sessionId: Long) {
         tickJob?.cancel()
         tickJob = scope.launch {
             while (isActive) {
+                p2p.refresh()
+                if (!session.isCurrent(sessionId)) break
+                if (p2p.state.value is P2pGroupState.Failed) {
+                    fail((p2p.state.value as P2pGroupState.Failed).reason, sessionId)
+                    break
+                }
                 AppState.applySnapshot(server.stats().snapshot(), port)
+                tickCount++
+                if (tickCount % 2 == 0) {
+                    val active = p2p.state.value as? P2pGroupState.Active
+                    if (active != null) {
+                        AppState.update { it.copy(clientsConnected = active.clientCount) }
+                    }
+                }
                 val s = AppState.state.value
-                val up = com.homerelay.app.util.FormatUtils.bytes(s.bytesUp)
-                val down = com.homerelay.app.util.FormatUtils.bytes(s.bytesDown)
-                updateNotification(
-                    getString(R.string.notification_title),
-                    "Proxy ${s.bindAddress}:$port  ·  up $up  down $down  ·  ${s.totalRequests} requests",
-                )
+                updateNotification(getString(R.string.notification_title), statusLine(s, port))
                 delay(1000)
             }
         }
     }
 
-    private fun fail(message: String, session: Long? = null) {
-        if (session != null && sessionCounter.get() != session) return // stale session; a newer one is running
+    private fun clientPresent(s: com.homerelay.app.state.SharingUiState): Boolean =
+        s.clientsConnected > 0 || s.seenDevices > 0
+
+    private fun statusLine(s: com.homerelay.app.state.SharingUiState, port: Int): String {
+        val up = com.homerelay.app.util.FormatUtils.bytes(s.bytesUp)
+        val down = com.homerelay.app.util.FormatUtils.bytes(s.bytesDown)
+        return when (s.phase) {
+            SharingPhase.Starting -> "Starting Wi-Fi Direct group…"
+            SharingPhase.Sharing ->
+                if (clientPresent(s))
+                    "Client connected · proxy ${s.bindAddress}:$port · up $up down $down · ${s.totalRequests} requests"
+                else
+                    "Group active, waiting for client · proxy ${s.bindAddress}:$port"
+            SharingPhase.UpstreamUnavailable ->
+                "Upstream unavailable — reconnect to home Wi-Fi · proxy ${s.bindAddress}:$port"
+            SharingPhase.Failed -> "Sharing stopped"
+            else -> "Proxy ${s.bindAddress}:$port · up $up down $down · ${s.totalRequests} requests"
+        }
+    }
+
+    private fun fail(message: String, sessionId: Long? = null) {
+        if (sessionId != null && !session.isCurrent(sessionId)) return // stale session; a newer one is running
+        tickJob?.cancel()
+        tickJob = null
         AppState.update { it.copy(phase = SharingPhase.Failed, errorMessage = message) }
         proxy?.let { runCatching { it.stop() } }
         proxy = null
-        hotspot.stop()
+        p2p.stop()
         releaseWakeLock()
+        unregisterPinnedNetworkCallback()
+        pinnedNetwork = null
+        PinnedUpstream.network = null
         updateNotification(
             getString(R.string.notification_title),
             "Sharing stopped: $message",
         )
-        val owner = session ?: sessionCounter.get()
+        val owner = sessionId ?: session.current()
         scope.launch {
             delay(4000)
-            if (sessionCounter.get() == owner) stopSelfAndClean()
+            if (session.isCurrent(owner)) stopSelfAndClean()
         }
     }
 
     fun stopSharing() {
-        sessionCounter.incrementAndGet() // invalidate pending fail-cleanups and session waits
+        session.invalidate() // retire pending fail-cleanups and session waits
         tickJob?.cancel()
         tickJob = null
         proxy?.let { p ->
@@ -267,21 +425,27 @@ class SharingService : Service() {
             p.stop()
         }
         proxy = null
-        hotspot.stop()
+        p2p.stop()
         releaseWakeLock()
+        unregisterPinnedNetworkCallback()
+        pinnedNetwork = null
+        PinnedUpstream.network = null
         AppState.reset()
         stopForegroundCompat()
         stopSelf()
     }
 
     private fun stopSelfAndClean() {
-        sessionCounter.incrementAndGet()
+        session.invalidate()
         tickJob?.cancel()
         tickJob = null
         proxy?.let { runCatching { it.stop() } }
         proxy = null
-        hotspot.stop()
+        p2p.stop()
         releaseWakeLock()
+        unregisterPinnedNetworkCallback()
+        pinnedNetwork = null
+        PinnedUpstream.network = null
         stopForegroundCompat()
         stopSelf()
     }
@@ -364,7 +528,6 @@ class SharingService : Service() {
     }
 
     /* ---------------- helpers ---------------- */
-
 
     companion object {
         const val ACTION_START = "com.homerelay.app.action.START"

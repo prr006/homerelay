@@ -57,7 +57,7 @@ public final class ProxyServer {
     public interface OutboundConnector {
         /**
          * Open a TCP connection to {@code host}:{@code port} bound to the upstream
-         * Wi-Fi network (never cellular / never the hotspot network).
+         * Wi-Fi network (never cellular / never the P2P group network).
          * Implementations must apply the supplied timeout and throw IOException on failure.
          */
         Socket open(String host, int port, int connectTimeoutMs) throws IOException;

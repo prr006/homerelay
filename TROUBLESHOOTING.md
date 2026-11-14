@@ -4,29 +4,68 @@ Real fixes for the failures a HomeRelay user can actually hit. Ordered roughly b
 If something here is wrong or incomplete, open an issue with your device model, Android/One UI
 build, and the exact error text from the app — not guesses.
 
-## Hotspot won't start / "Hotspot did not start within 15 seconds"
+## Group won't start / "The Wi‑Fi Direct group did not form within 20 seconds"
 
 1. Toggle Wi‑Fi off and on once, then press **Start sharing** again.
-2. Another hotspot may already be active (system "Mobile Hotspot" or "Wi‑Fi sharing").
-   Turn it off in Settings → Connections → Mobile Hotspot, then retry.
-   `ERROR_INCOMPATIBLE_MODE` from the system means exactly this.
-3. `ERROR_TETHERING_DISALLOWED` — the system refused because tethering is restricted on this
-   SIM/plan or by device policy (enterprise). HomeRelay cannot override this; it can only show
-   you the error.
-4. Location (Android ≤12) or Nearby devices (Android 13+) permission missing → grant it; the
-   hotspot API requires it even though HomeRelay never uses your location.
-5. Corporate/MDM-managed phones: `ERROR_NO_CHANNEL` — no usable channel. Nothing to do.
-6. One UI aggressively freezes background starts: open the app (foreground) and press Start,
+2. Another Wi‑Fi Direct app may hold the P2P role (e.g. Nearby Share, Smart View, another
+   hotspot-sharing app). Stop it, then retry. `P2P_UNSUPPORTED`, `BUSY` or `ERROR` from the
+   system mean exactly this class of problem.
+3. `NO_PERMISSION` — Location (Android ≤12) or Nearby devices (Android 13+) permission
+   missing → grant it; the Wi‑Fi Direct API requires it even though HomeRelay never uses your
+   location.
+4. System "Mobile Hotspot" / "Wi‑Fi sharing" active at the same time can conflict. Turn it
+   off in Settings → Connections → Mobile Hotspot, then retry.
+5. Checks tab → **Wi‑Fi Direct hardware support** says FAIL → this device cannot host the
+   group at all; no software change can fix that.
+6. Checks tab → **Wi‑Fi P2P enabled state** says disabled → turn Wi‑Fi off and on (P2P rides
+   on it), then retry.
+7. One UI aggressively freezes background starts: open the app (foreground) and press Start,
    rather than starting after a reboot or from a widget.
+
+## "Creating the Wi‑Fi Direct group disconnected the upstream home Wi‑Fi"
+
+This is the one real firmware risk for v1.2.0: some chipsets cannot keep a STA association to
+the home router **and** host a P2P group at the same time. When that happens, HomeRelay
+detects it immediately (the pinned network vanishes right after group formation), removes the
+group, and fails with this exact message instead of showing a sharing state that cannot work.
+Mobile data is **not** used as a fallback.
+
+What to try:
+
+1. Toggle Wi‑Fi off and on, then start again. Some firmwares sequence STA+P2P correctly on a
+   fresh retry; some never can.
+2. Make sure no other P2P/tethering path is active (system hotspot, Nearby Share, VPN) — one
+   extra P2P consumer can be the difference.
+3. If it fails every time, collect the evidence and report it:
+   - HomeRelay → Checks → screenshot, especially **Upstream survived group creation** (FAIL)
+     and **P2P interface / IPv4**;
+   - `adb shell dumpsys wifi` and `adb shell ip link` right after the failure;
+   - your One UI version (Settings → About phone → Software information).
+   This is a device/firmware limitation, not an app bug — but it decides whether v1.2.0 works
+   on the M01 at all, so the report genuinely matters.
+
+## "The Wi‑Fi Direct group disappeared mid-session" / sharing stopped suddenly
+
+The group vanished (system removed it, Wi‑Fi toggled, a conflicting P2P app ran). HomeRelay
+stops everything and does **not** keep showing "Sharing" — press Start again. If it recurs,
+see the item above.
+
+## "Upstream unavailable" while sharing
+
+The group and proxy are up, but the pinned home Wi‑Fi is lost or Android has not validated it.
+Proxied requests fail until Wi‑Fi returns — HomeRelay does not reroute to mobile data.
+Reconnect the phone to home Wi‑Fi (same SSID); the app flips back to sharing automatically
+when Android validates the network again. If it says "not validated" but you have internet,
+the router may need a re-check: toggle Wi‑Fi off/on on the **phone**, not the client.
 
 ## Client connects but has no internet
 
-1. **Proxy is the only path out.** Wi‑Fi → hotspot → Advanced/Modify → Proxy — set to
-   *Manual*, host = the hotspot IP shown on the HomeRelay dashboard, port = the one shown
-   (default 8080). Save, rejoin if the client "forgets" it.
+1. **Proxy is the only path out.** Wi‑Fi → the DIRECT-xxxxxx group → Advanced/Modify → Proxy — set to
+   *Manual*, host = the group IP shown on the HomeRelay dashboard (e.g. DIRECT-xxxxxx's owner address —
+   shown live), port = the one shown (default 8080). Save, rejoin if the client "forgets" it.
 2. Or use *Proxy auto-config* with the PAC URL printed in the app — it must be reachable in a
    browser first: open the PAC URL on the client; you should see JavaScript text beginning
-   `function FindProxyForURL(`. If not, you are not on the hotspot, or sharing is off.
+   `function FindProxyForURL(`. If not, you are not on the group, or sharing is off.
 3. If the client works for `http://` but not `https://`, it is not really using the proxy
    (HTTPS needs the CONNECT tunnel). Recheck step 1. Firefox ignores OS proxy settings —
    set it in Firefox → Settings → Network Settings directly.
@@ -57,17 +96,17 @@ itself out — this requires your touch, once:
 
 ## "Can it start automatically after a reboot?"
 
-**No, and it doesn't pretend to.** Stock Android restricts boot-start for hotspot/proxy
+**No, and it doesn't pretend to.** Stock Android restricts boot-start for Wi‑Fi Direct/proxy
 work; `BOOT_COMPLETED` receivers are also unreliable on One UI and HomeRelay does not ship
 one. After a reboot: open the app, tap Start. That's the supported path.
 
-## "Can I set the hotspot name/password to match my home Wi‑Fi (same SSID/password)?"
+## "Can I set the group name/password to match my home Wi‑Fi (same SSID/password)?"
 
-No on Android 12+: the system generates a random SSID and passphrase for every
-`LocalOnlyHotspot` activation, and third-party apps cannot change or choose them. Matching
-name/password with an *existing* router is also not mesh, not roaming, not repeating — joining
-this hotspot gives clients this hotspot, nothing else. Seamless hand-off between home router
-and phone is not possible without root.
+No. Wi‑Fi Direct group names must start with `DIRECT-`, and HomeRelay generates fresh
+`DIRECT-xxxxxx` credentials for every session by design. They cannot be made to match your
+home SSID, and that would not be mesh, roaming or repeating anyway — joining the group gives
+clients the group, nothing else. Seamless hand-off between home router and phone is not
+possible without root.
 
 ## Byte counters / client list look odd
 
@@ -104,3 +143,40 @@ or Device care → Battery → App power management → HomeRelay for background
 Model (SM-M015G/DS…), Android + One UI version, HomeRelay version (Settings → About),
 whether home Wi‑Fi had validated internet (Checks tab), and the exact text on the failing
 screen. Screenshots of the notification while sharing is running help a lot.
+
+## Upgrading from v1.1.x or v1.0.0
+
+- v1.1.x → v1.2.0: installs in place (same `com.homerelay.app` id, same committed debug
+  keystore). No uninstall needed. v1.2.0 replaces the hotspot sharing path with Wi‑Fi Direct
+  Group Owner — it is not a settings migration, it is a new sharing engine.
+- v1.0.0 → anything ≥ v1.1.0: uninstall v1.0.0 first (its signing key is unrecoverable).
+
+## Hardware test procedure (pending)
+
+Nothing on this page has been verified on physical M01/M36 hardware yet. When you test, this
+is the procedure that produces trustworthy evidence — in order, ~10 minutes:
+
+1. **Baseline (v1.2.0, fresh install).** Install `homerelay-debug.apk`. Open the app, run
+   Checks. Record: Android version, Wi‑Fi Direct hardware support, P2P enabled state,
+   permissions, battery exemption.
+2. **Upstream pin.** Connect the M01 to home Wi‑Fi. Start sharing. As soon as "Group active —
+   waiting for client" appears, confirm on the M01 that Wi‑Fi is **still connected** (Settings →
+   Connections → Wi‑Fi shows your SSID, not disconnected).
+3. **Survival evidence** (the decisive check): HomeRelay → Checks → **Upstream survived group
+   creation**. PASS = this firmware runs STA+P2P. FAIL = it cannot; stop here and file the
+   report described above.
+4. **Join from the M36.** Wi‑Fi → pick `DIRECT-xxxxxx` → enter the password from the dashboard.
+5. **Proxy + browser.** Set M36's proxy to the dashboard's host:port. Load
+   `http://connectivitycheck.gstatic.com/generate_204`, then `https://www.wikipedia.org`.
+   Then try YouTube (HTTPS CONNECT) — report separately.
+6. **Diagnostics back on the M01.** Checks → confirm: group created PASS, Group Owner PASS,
+   interface name (e.g. `p2p0`), P2P IPv4, credentials PASS, upstream identity = your home
+   SSID, validated PASS, HTTP through proxy PASS, HTTPS through proxy PASS.
+7. **Repeatability.** Stop sharing, start again, re-join from the client. Five cycles. No
+   stale group should linger in the client's Wi‑Fi list, and the dashboard must never show
+   "Sharing"/"Group active" after a group disappeared.
+8. **Negative control.** Turn home Wi‑Fi off on the M01 mid-session. The dashboard must flip
+   to **Upstream unavailable** (not "Sharing"), and proxied requests on the M36 must fail —
+   then turn Wi‑Fi back on and confirm it recovers to sharing.
+9. Capture screenshots of the Checks screen in both the PASS and any FAIL scenario and attach
+   them to the issue. That is the difference between "it didn't work" and a fixable bug.

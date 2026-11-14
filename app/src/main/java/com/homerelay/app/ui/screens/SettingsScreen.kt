@@ -76,14 +76,14 @@ fun SettingsScreen(
                         if (parsed != -1) onProxyPortChange(parsed)
                     },
                     label = { Text("Proxy port") },
-                    supportingText = { Text(portError ?: "Clients will connect to this port on the hotspot address.") },
+                    supportingText = { Text(portError ?: "Clients will connect to this port on the group address.") },
                     isError = portError != null,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 ListItem(
                     headlineContent = { Text("PAC auto-config endpoint") },
-                    supportingContent = { Text("Serves /proxy.pac on the hotspot address. Turn off to hide the PAC file (manual setup still works).") },
+                    supportingContent = { Text("Serves /proxy.pac on the group address. Turn off to hide the PAC file (manual setup still works).") },
                     trailingContent = {
                         SwitchChecked(settings.pacEnabled, onPacEnabledChange)
                     },
@@ -121,7 +121,7 @@ fun SettingsScreen(
                     trailingContent = { SwitchChecked(settings.keepScreenOn, onKeepScreenOnChange) },
                 )
                 ListItem(
-                    headlineContent = { Text("Show hotspot password") },
+                    headlineContent = { Text("Show group password") },
                     supportingContent = { Text("Off hides it behind bullets until you tap Show.") },
                     trailingContent = { SwitchChecked(settings.showPassphrase, onShowPassphraseChange) },
                 )
@@ -160,13 +160,13 @@ fun SettingsScreen(
                     "• No analytics, telemetry or ads — ever.\n" +
                         "• All sharing traffic stays on your LAN via the on-device proxy; nothing is sent to HomeRelay servers because none exist.\n" +
                         "• HTTPS traffic is end-to-end encrypted and never decrypted by the proxy.\n" +
-                        "• The hotspot uses WPA2/WPA3 as configured by Android; Android assigns the credentials.\n" +
-                        "• Anyone on the hotspot can use the proxy while sharing is on. Stop sharing when you are done (or use the persistent notification).",
+                        "• The group uses WPA2-Personal; HomeRelay generates the credentials fresh per session.\n" +
+                        "• Anyone in the group can use the proxy while sharing is on. Stop sharing when you are done (or use the persistent notification).",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 HorizontalDivider()
                 Text(
-                    "HomeRelay: proxy-based internet sharing over a local-only hotspot. Same-name/same-password Wi-Fi is not mesh, not roaming, not a transparent repeater.",
+                    "HomeRelay: proxy-based internet sharing over a Wi-Fi Direct group. Same-name/same-password Wi-Fi is not mesh, not roaming, not a transparent repeater.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

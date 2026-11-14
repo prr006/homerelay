@@ -43,7 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.homerelay.app.data.Settings
 import com.homerelay.app.data.SettingsStore
 import com.homerelay.app.data.ThemeChoice
-import com.homerelay.app.util.HotspotPermissions
+import com.homerelay.app.util.SharingPermissions
 import com.homerelay.app.diagnostics.Diagnostics
 import com.homerelay.app.net.UpstreamMonitor
 import com.homerelay.app.service.SharingService
@@ -72,8 +72,8 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { _ ->
-        // Only the hotspot permission blocks sharing. Notification denial just means no shade UI.
-        if (HotspotPermissions.hasHotspotPermission(this@MainActivity)) {
+        // Only the Wi-Fi Direct permission blocks sharing. Notification denial just means no shade UI.
+        if (SharingPermissions.hasHotspotPermission(this@MainActivity)) {
             sendServiceAction(SharingService.ACTION_START)
         } else {
             permissionDenied = true
@@ -159,12 +159,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startSharingWithPermissions() {
-        if (HotspotPermissions.hasHotspotPermission(this)) {
+        if (SharingPermissions.hasHotspotPermission(this)) {
             sendServiceAction(SharingService.ACTION_START)
             return
         }
         val toRequest = buildList {
-            addAll(HotspotPermissions.missingHotspotPermissions(this@MainActivity))
+            addAll(SharingPermissions.missingHotspotPermissions(this@MainActivity))
             if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED
@@ -172,7 +172,7 @@ class MainActivity : ComponentActivity() {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }.distinct()
-        if (toRequest.isEmpty()) { // hotspot permission satisfied after all (race)
+        if (toRequest.isEmpty()) { // sharing permission satisfied after all (race)
             sendServiceAction(SharingService.ACTION_START)
             return
         }
@@ -282,13 +282,13 @@ private fun HomeRelayApp(
             title = { Text("Permission needed") },
             text = {
                 Text(
-                    "Android refuses to create the local-only hotspot unless HomeRelay holds the " +
+                    "Android refuses to create the Wi-Fi Direct group unless HomeRelay holds the " +
                         (if (Build.VERSION.SDK_INT >= 33)
                             "Nearby devices (Wi-Fi)"
                         else
                             "Location") +
                         " permission. This is an Android requirement for all apps — HomeRelay does " +
-                        "not use your location at all; it only asks because the hotspot API demands it.\n\n" +
+                        "not use your location at all; it only asks because the Wi-Fi Direct API demands it.\n\n" +
                         "If the system dialog no longer appears, open App info → Permissions and grant it manually.",
                 )
             },
@@ -311,11 +311,11 @@ private fun HomeRelayApp(
             text = {
                 Text(
                     "HomeRelay shares your phone's Wi-Fi internet with nearby devices through a " +
-                        "local-only hotspot plus an on-device web proxy.\n\n" +
+                        "Wi-Fi Direct group plus an on-device web proxy.\n\n" +
                         "• Clients must set their Wi-Fi proxy manually (or use the PAC URL).\n" +
                         "• HTTPS stays encrypted end-to-end.\n" +
                         "• No ads, no analytics, no accounts — nothing leaves your phone except the share itself.\n" +
-                        "• Android assigns the hotspot name and password.\n\n" +
+                        "• HomeRelay generates a fresh group name and password per session.\n\n" +
                         "Same Wi-Fi name/password on two devices is not mesh, not roaming, and not a repeater. " +
                         "This is proxy sharing, honest and explicit.\n\n" +
                         "For One UI: exempt HomeRelay from battery optimization (Settings screen) so the session stays alive.",

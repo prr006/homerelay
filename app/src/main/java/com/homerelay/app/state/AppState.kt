@@ -8,9 +8,12 @@ import kotlinx.coroutines.flow.asStateFlow
 /** Lifecycle of a sharing session, as observed by the UI. */
 enum class SharingPhase {
     Idle,
-    StartingHotspot,
-    StartingProxy,
+    /** Asking Android for the P2P group; proxy not started yet. */
+    Starting,
+    /** Group formed and proxy bound and listening. Clients may or may not be connected (see clientsConnected). */
     Sharing,
+    /** Group and proxy are up, but the pinned upstream home Wi-Fi is lost or unvalidated. Requests will fail. */
+    UpstreamUnavailable,
     Stopping,
     Failed,
 }
@@ -19,8 +22,21 @@ enum class SharingPhase {
 data class SharingUiState(
     val phase: SharingPhase = SharingPhase.Idle,
     val errorMessage: String? = null,
-    val hotspotSsid: String? = null,
-    val hotspotPassphrase: String? = null,
+    /** Wi-Fi Direct group network name (SSID), e.g. "DIRECT-K7q2R9". */
+    val p2pSsid: String? = null,
+    /** Wi-Fi Direct group passphrase for legacy clients. */
+    val p2pPassphrase: String? = null,
+    /** Interface the group was created on, as reported by the framework (e.g. "p2p0"). */
+    val groupInterfaceName: String? = null,
+    /** Group frequency in MHz, as reported by the framework. */
+    val groupFrequencyMhz: Int? = null,
+    val groupSecurityType: String? = null,
+    /** True when Android reports this device as the group owner (HomeRelay creates it as GO). */
+    val groupIsGroupOwner: Boolean? = null,
+    /** True when the upstream home Wi-Fi was still alive immediately after the group was created. Null if untested. */
+    val upstreamSurvivedGroupCreation: Boolean? = null,
+    /** Clients currently in the group (from requestGroupInfo). */
+    val clientsConnected: Int = 0,
     val bindAddress: String? = null,
     val proxyPort: Int = 8080,
     val pacUrl: String? = null,
@@ -35,10 +51,11 @@ data class SharingUiState(
     val seenDevices: Int = 0,
     val activeConnections: Int = 0,
 ) {
+    /** True only while the proxy is definitely live and the group definitely exists. */
     val sharing: Boolean
-        get() = phase == SharingPhase.Sharing || phase == SharingPhase.StartingProxy
+        get() = phase == SharingPhase.Sharing || phase == SharingPhase.UpstreamUnavailable
     val busy: Boolean
-        get() = phase == SharingPhase.StartingHotspot || phase == SharingPhase.StartingProxy || phase == SharingPhase.Stopping
+        get() = phase == SharingPhase.Starting || phase == SharingPhase.Stopping
 }
 
 /**

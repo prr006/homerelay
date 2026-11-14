@@ -6,11 +6,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 
 /**
- * Runtime permission state for the hotspot path, backed by [HotspotPolicy].
+ * Runtime permission state for the Wi-Fi Direct sharing path, backed by [HotspotPolicy].
  * The policy (what is required) lives in Java next to the test suite;
  * this object only knows how to ask the OS.
+ *
+ * Wi-Fi Direct uses the same OS permission requirements as the local-only hotspot:
+ * location on Android ≤ 12, NEARBY_WIFI_DEVICES (neverForLocation) on 13+.
  */
-object HotspotPermissions {
+object SharingPermissions {
 
     fun hasHotspotPermission(context: Context): Boolean = HotspotPolicy.hotspotPermissionGranted(
         Build.VERSION.SDK_INT,
@@ -19,7 +22,7 @@ object HotspotPermissions {
         nearbyWifiGranted(context),
     )
 
-    /** Permissions still to request at runtime to unlock the hotspot on this device. */
+    /** Permissions still to request at runtime to unlock the group on this device. */
     fun missingHotspotPermissions(context: Context): List<String> =
         HotspotPolicy.missingHotspotPermissions(
             Build.VERSION.SDK_INT,

@@ -62,7 +62,7 @@ fun DashboardScreen(
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     var tick by remember { mutableStateOf(0L) }
-    val sharing = state.phase == SharingPhase.Sharing
+    val sharing = state.phase == SharingPhase.Sharing || state.phase == SharingPhase.UpstreamUnavailable
 
     LaunchedEffect(sharing) {
         while (sharing) {
@@ -119,9 +119,18 @@ fun DashboardScreen(
         }
 
         item {
-            SectionCard(title = "Local hotspot") {
+            SectionCard(title = "Wi-Fi Direct group") {
                 if (sharing) {
-                    InfoRow("SSID", state.hotspotSsid ?: "Unavailable (Android hid it)")
+                    InfoRow("Network name (SSID)", state.p2pSsid ?: "Unavailable (Android hid it)")
+                    InfoRow("Interface", state.groupInterfaceName ?: "Unknown")
+                    InfoRow("Frequency", state.groupFrequencyMhz?.let { "$it MHz" } ?: "Unknown")
+                    InfoRow("Security", state.groupSecurityType ?: "Unknown")
+                    InfoRow("Clients connected (P2P)", state.clientsConnected.toString())
+                    Text(
+                        "Android may not list legacy (non-P2P) stations on every firmware — cross-check with “Clients seen” below, which counts real proxy traffic.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -134,7 +143,7 @@ fun DashboardScreen(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                if (showPassphrase) (state.hotspotPassphrase ?: "Unavailable") else "••••••••••",
+                                if (showPassphrase) (state.p2pPassphrase ?: "Unavailable") else "••••••••••",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontFamily = FontFamily.Monospace,
                             )
@@ -144,13 +153,13 @@ fun DashboardScreen(
                         }
                     }
                     Text(
-                        "Android generates the hotspot name and password; they cannot be chosen on stock Android 12.",
+                        "HomeRelay generates a fresh group name and password per session (DIRECT-xxxxxx, WPA2).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     Text(
-                        "Start sharing to create the local hotspot. The system assigns its name and password.",
+                        "Start sharing to create a Wi-Fi Direct group. HomeRelay generates its name and password.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -188,7 +197,7 @@ fun DashboardScreen(
         item {
             Text(
                 "Proxy sharing is not transparent Wi-Fi bridging. Clients must set the HTTP proxy " +
-                    "themselves. HTTPS stays encrypted end-to-end (CONNECT tunneling). The hotspot " +
+                    "themselves. HTTPS stays encrypted end-to-end (CONNECT tunneling). The group " +
                     "does not share internet to apps that ignore the proxy.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -208,11 +217,14 @@ private fun HeroStatusCard(
 ) {
     SectionCard {
         val (title, subtitle) = when (state.phase) {
-            SharingPhase.Idle -> "Home internet for nearby devices" to "Tap Start sharing. Your phone becomes the access point; clients use a local proxy."
-            SharingPhase.StartingHotspot -> "Starting hotspot…" to "Asking Android for a local-only hotspot."
-            SharingPhase.StartingProxy -> "Starting proxy…" to "Binding the proxy to the hotspot interface."
-            SharingPhase.Sharing -> "Sharing" to "Proxy is live. Configure your client's Wi-Fi proxy to the values below."
-            SharingPhase.Stopping -> "Stopping…" to "Shutting down hotspot and proxy."
+            SharingPhase.Idle -> "Home internet for nearby devices" to "Tap Start sharing. Your phone creates a Wi-Fi Direct group; clients join it and use a local proxy."
+            SharingPhase.Starting -> "Starting Wi-Fi Direct group…" to "Pinning the home Wi-Fi upstream, then asking Android to create the group."
+            SharingPhase.Sharing ->
+                if (state.clientsConnected > 0 || state.seenDevices > 0) "Client connected" to "A device is using the proxy. HTTPS passes through CONNECT tunnels; byte counters update live below."
+                else "Group active — waiting for client" to "The group is broadcasting. Join it from the client, set its Wi-Fi proxy to the values below."
+            SharingPhase.UpstreamUnavailable ->
+                "Upstream unavailable" to "The group is up but the home Wi-Fi is lost or unvalidated — proxied requests fail. Reconnect the phone to home Wi-Fi; sharing resumes automatically. Mobile data is never used."
+            SharingPhase.Stopping -> "Stopping…" to "Shutting down the group and proxy."
             SharingPhase.Failed -> "Sharing stopped" to (state.errorMessage ?: "Unknown error")
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -235,7 +247,7 @@ private fun HeroStatusCard(
             }
         }
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (state.phase == SharingPhase.Sharing || state.busy) {
+        if (state.sharing || state.busy) {
             Button(
                 onClick = onStop,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -270,7 +282,7 @@ private fun UsageTile(label: String, value: String, modifier: Modifier = Modifie
 private fun ProxyCard(state: com.homerelay.app.state.SharingUiState, pacEnabled: Boolean) {
     val clipboard = LocalClipboardManager.current
     SectionCard(title = "Client proxy settings") {
-        if (state.phase == SharingPhase.Sharing && state.bindAddress != null) {
+        if (state.sharing && state.bindAddress != null) {
             val address = "${state.bindAddress}:${state.proxyPort}"
             Box(
                 Modifier
