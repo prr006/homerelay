@@ -133,7 +133,10 @@ answer either way.
    Android anonymises for Group Owners — the proxy failed to bind and the local proxy/HTTP
    checks failed even though the group itself was up. v1.2.1 resolves the address from the
    P2P interface as described above.
-9. **v1.2.2 diagnostic correction.** The plain-HTTP check no longer uses
+9. **v1.2.3 diagnostic correction.** The plain-HTTP check treats a well-formed
+   response as success only when the status is exactly **204** (generate_204). HomeRelay's
+   proxy answers 502/503/504 when forwarding fails, so any other status now FAILs with the
+   actual status line quoted. **v1.2.2** introduced The plain-HTTP check no longer uses
    `HttpURLConnection` (API 36 blocks cleartext → the check failed with
    "Cleartext HTTP traffic to connectivitycheck.gstatic.com not permitted" before any
    byte reached the proxy). It now speaks to the local HomeRelay proxy directly over a

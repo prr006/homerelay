@@ -113,6 +113,23 @@ public final class ProxyHttpProbe {
         }
     }
 
+    /**
+     * Verdict for a diagnostic endpoint that expects one exact status. HomeRelay's own
+     * proxy answers 502 (DNS/bad gateway), 503 (no upstream) and 504 (upstream timeout)
+     * when forwarding fails — a well-formed 502 is still a failure for the caller.
+     * Transport-level failures (malformed response, refused, timeout) are returned as-is;
+     * an unexpected but well-formed status becomes a failure quoting the actual status
+     * line and code. The {@code statusLine} is preserved on the failure message.
+     */
+    public static Result requireExactStatus(Result r, int expectedStatus) {
+        if (r == null) return Result.failure("No response from the proxy.");
+        if (!r.success) return r;
+        if (r.statusCode == expectedStatus) return r;
+        String line = r.statusLine != null ? r.statusLine.trim() : ("HTTP " + r.statusCode);
+        return Result.failure("Unexpected status from the proxy: " + line +
+            " — expected HTTP " + expectedStatus + ".");
+    }
+
     /** The exact request bytes sent to the proxy (exposed for tests/diagnostics). */
     public static String buildRequest(String absoluteUri, String hostHeader) {
         return "GET " + absoluteUri + " HTTP/1.1\r\n"

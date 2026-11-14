@@ -19,8 +19,8 @@ android {
         // Wi-Fi Direct (WifiP2pManager) is API 14+; NEARBY_WIFI_DEVICES requires API 33 maxSdk handling. API 26 kept as minSdk.
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.2"
+        versionCode = 6
+        versionName = "1.2.3"
     }
 
     signingConfigs {

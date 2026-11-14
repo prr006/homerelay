@@ -466,17 +466,21 @@ class Diagnostics(private val context: Context) {
                 // gstatic connectivity check endpoint: http:// prefix is what makes this an
                 // absolute-form proxy request rather than origin-form.
                 // positional args: ProxyHttpProbe is a Java class (named args are prohibited)
-                val result = ProxyHttpProbe.probeGet(host, port, PLAIN_HTTP_PROBE_URL, PLAIN_HTTP_PROBE_HOST, 6_000, 6_000)
+                val raw = ProxyHttpProbe.probeGet(host, port, PLAIN_HTTP_PROBE_URL, PLAIN_HTTP_PROBE_HOST, 6_000, 6_000)
+                // generate_204 returns ONLY 204 on success; HomeRelay's own proxy answers
+                // 502/503/504 when forwarding fails. Anything else is a failure for this
+                // endpoint — quoting the actual status line, never a false PASS.
+                val result = ProxyHttpProbe.requireExactStatus(raw, 204)
                 if (result.success) {
                     CheckResult(
                         id, label, CheckStatus.PASS,
-                        "Proxy answered ${result.statusCode} for $PLAIN_HTTP_PROBE_URL " +
+                        "Proxy answered 204 No Content for $PLAIN_HTTP_PROBE_URL " +
                             "(absolute-form via $host:$port).",
                     )
                 } else {
                     CheckResult(
                         id, label, CheckStatus.FAIL,
-                        "No usable answer from the proxy: ${result.error}",
+                        "Proxy did not deliver $PLAIN_HTTP_PROBE_URL successfully: ${result.error}",
                     )
                 }
             }

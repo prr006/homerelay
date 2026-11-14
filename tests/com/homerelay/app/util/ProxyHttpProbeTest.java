@@ -183,6 +183,69 @@ public final class ProxyHttpProbeTest {
         assertFalse(ProxyHttpProbe.probeGet("127.0.0.1", 99999, "http://x/", "x", 100, 100).success);
     }
 
+    @Test
+    public void requireExactStatus204Passes() throws Exception {
+        try (MockProxy proxy = new MockProxy("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")) {
+            ProxyHttpProbe.Result raw = ProxyHttpProbe.probeGet(
+                "127.0.0.1", proxy.port(),
+                "http://connectivitycheck.gstatic.com/generate_204",
+                "connectivitycheck.gstatic.com", 2000, 2000);
+            ProxyHttpProbe.Result v = ProxyHttpProbe.requireExactStatus(raw, 204);
+            assertTrue("204 must be accepted for generate_204", v.success);
+            assertEquals(204, v.statusCode);
+        }
+    }
+
+    @Test
+    public void requireExactStatusRejectsWellFormedNon204() throws Exception {
+        for (String statusLine : new String[]{
+            "HTTP/1.1 200 OK", "HTTP/1.1 301 Moved Permanently", "HTTP/1.1 400 Bad Request"}) {
+            String resp = statusLine + "\r\nContent-Length: 0\r\n\r\n";
+            try (MockProxy proxy = new MockProxy(resp)) {
+                ProxyHttpProbe.Result raw = ProxyHttpProbe.probeGet(
+                    "127.0.0.1", proxy.port(),
+                    "http://connectivitycheck.gstatic.com/generate_204",
+                    "connectivitycheck.gstatic.com", 2000, 2000);
+                assertTrue("transport parse should succeed for " + statusLine, raw.success);
+                ProxyHttpProbe.Result v = ProxyHttpProbe.requireExactStatus(raw, 204);
+                assertFalse("expected 204, got " + statusLine + " must NOT pass", v.success);
+                assertNotNull(v.error);
+                assertTrue("actual status line quoted, got: " + v.error, v.error.contains(statusLine));
+            }
+        }
+    }
+
+    @Test
+    public void proxyGatewayErrorsAreFailures() throws Exception {
+        // HomeRelay's own ProxyServer: 502 DNS/bad gateway, 503 upstream down, 504 timeout.
+        for (String statusLine : new String[]{
+            "HTTP/1.1 502 Bad Gateway", "HTTP/1.1 503 Service Unavailable", "HTTP/1.1 504 Gateway Timeout"}) {
+            String resp = statusLine + "\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nfail";
+            try (MockProxy proxy = new MockProxy(resp)) {
+                ProxyHttpProbe.Result raw = ProxyHttpProbe.probeGet(
+                    "127.0.0.1", proxy.port(),
+                    "http://connectivitycheck.gstatic.com/generate_204",
+                    "connectivitycheck.gstatic.com", 2000, 2000);
+                assertTrue("transport parse ok for " + statusLine, raw.success);
+                ProxyHttpProbe.Result v = ProxyHttpProbe.requireExactStatus(raw, 204);
+                assertFalse(statusLine + " must FAIL", v.success);
+                assertTrue("actual status line quoted, got: " + v.error, v.error.contains(statusLine));
+                assertTrue("expected 204 quoted, got: " + v.error, v.error.contains("expected HTTP 204"));
+            }
+        }
+    }
+
+    @Test
+    public void requireExactStatusPassesTransportFailuresThrough() {
+        ProxyHttpProbe.Result empty = ProxyHttpProbe.parseResponse(new byte[0]);
+        assertFalse(ProxyHttpProbe.requireExactStatus(empty, 204).success);
+        ProxyHttpProbe.Result malformed = ProxyHttpProbe.parseResponse(
+            "garbage\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+        assertFalse(ProxyHttpProbe.requireExactStatus(malformed, 204).success);
+        ProxyHttpProbe.Result nullResult = ProxyHttpProbe.requireExactStatus(null, 204);
+        assertFalse("null result must fail", nullResult.success);
+    }
+
     private static void assertTrue(String msg, boolean v) {
         if (!v) throw new AssertionError(msg);
     }
