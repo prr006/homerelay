@@ -308,19 +308,27 @@ class SharingService : Service() {
 
     private fun registerPinnedNetworkCallback(upstream: Network, sessionId: Long) {
         unregisterPinnedNetworkCallback()
+        val pinnedHandle = upstream.networkHandle
+        // No public API watches one specific Network; request all Wi-Fi networks and
+        // filter by networkHandle. Nothing about other networks affects the session.
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                if (network.networkHandle != pinnedHandle) return
                 val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                 applyUpstreamState(validated = validated, sessionId = sessionId)
             }
 
             override fun onLost(network: Network) {
+                if (network.networkHandle != pinnedHandle) return
                 applyUpstreamState(validated = false, sessionId = sessionId, lost = true)
             }
         }
         upstreamCallback = cb
         val cm = getSystemService(ConnectivityManager::class.java)
-        runCatching { cm.registerNetworkCallback(upstream, cb) }
+        val request = android.net.NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        runCatching { cm.registerNetworkCallback(request, cb) }
     }
 
     private fun unregisterPinnedNetworkCallback() {
