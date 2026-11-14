@@ -89,10 +89,10 @@ public final class ProxyHttpProbe {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
             socket.setSoTimeout(readTimeoutMs);
-            try (OutputStream out = socket.getOutputStream()) {
-                out.write(request.getBytes(StandardCharsets.US_ASCII));
-                out.flush();
-            }
+            // Do NOT close the output stream: closing it would close the whole socket before we read.
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
             byte[] raw = readResponse(socket.getInputStream(), maxResponseBytes);
             return parseResponse(raw);
         } catch (SocketTimeoutException e) {
