@@ -85,6 +85,13 @@ The **release** APK is signed only if the release owner set `HOMERELAY_RELEASE_*
 otherwise it is unsigned and Android will refuse it — use the debug APK instead, or sign your
 own build (BUILDING.md).
 
+**"App not installed" / "package conflicts with an existing package" (signature mismatch):**
+the v1.0.0 debug APK was signed on an ephemeral CI runner keystore that no longer exists, so
+v1.1.0+ cannot update over it in place. Uninstall v1.0.0, then install v1.1.0. From v1.1.0 on,
+every CI debug build uses the same committed debug keystore, so updates install normally.
+If you sideloaded a locally built APK and a CI APK, the same rule applies — pick one signature
+and stick with it (uninstall before switching).
+
 ## Data usage audit
 
 Home network interface counters will show the phone pulling the same bytes the clients push

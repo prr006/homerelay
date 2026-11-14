@@ -186,6 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - name: Download APKs
@@ -194,7 +195,11 @@ jobs:
           name: homerelay-apks
           path: out
       - name: Checksums
-        run: (cd out && sha256sum *.apk > SHA256SUMS.txt) && cat out/SHA256SUMS.txt
+        run: (cd out && sha256sum *.apk > SHA256SUMS.txt) && cat out/SHA256SUMS.txt && python3 tools/ci-issue-comment.py sha256sums.txt checksums-${{ github.ref_name }} out/SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:

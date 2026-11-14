@@ -43,7 +43,18 @@ with the Eclipse compiler). In CI, `javac` and the runner's preinstalled SDK are
 ## Signing builds
 
 ### Debug
-Nothing to do — `isMinifyEnabled = false`, signed with the standard debug keystore.
+`isMinifyEnabled = false`. **Every build — local or CI — signs with the committed project
+debug keystore** (`app/debug.keystore`, standard public Android debug credentials:
+alias `androiddebugkey`, password `android`). This is not a secret and never was; the
+keystore is committed deliberately so:
+
+- all CI artifacts carry the **same signature**, and
+- you can install a newer debug APK **over** an older one without uninstalling.
+
+**Upgrade note (v1.0.0 → v1.1.0):** the v1.0.0 release APK was signed on an ephemeral CI
+runner keystore that no longer exists. v1.1.0 cannot update over it in place — Android
+will report a signature mismatch. **Uninstall v1.0.0 once, then install v1.1.0.**
+From v1.1.0 onward, debug builds update cleanly over each other with this committed key.
 
 ### Release
 Release signing is **off by default and no keys are committed** (`.gitignore` must keep

@@ -46,7 +46,9 @@ HomeRelay is a small, honest Android app: it asks stock Android for a *local-onl
 3. Grant **Nearby devices** (Android 13+) or **Location** (Android 12 and below — required by the hotspot API) when asked, and allow notifications.
 4. Tap **Start sharing** on the dashboard.
 
-`homerelay-release.apk` is **signed only if the repository owner configured `HOMERELAY_RELEASE_*` secrets**; otherwise it is unsigned and will not install. See BUILDING.md for signing your own release build. The debug APK is signed with the standard Android debug key and installs fine.
+`homerelay-release.apk` is **signed only if the repository owner configured `HOMERELAY_RELEASE_*` secrets**; otherwise it is unsigned and will not install. See BUILDING.md for signing your own release build. The debug APK (v1.1.0+) is signed with the committed project debug keystore so every CI build updates cleanly over the last.
+
+**Upgrading from v1.0.0:** uninstall it first. The v1.0.0 debug APK was signed on an ephemeral CI runner key that cannot be recovered, so Android will refuse an in-place update with a signature-mismatch error. One uninstall, then install the new APK — every release from v1.1.0 on shares one stable debug signature.
 
 ## Client quick start (5 steps)
 
