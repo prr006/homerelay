@@ -7,7 +7,9 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.PowerManager
+import com.homerelay.app.net.InterfaceResolution
 import com.homerelay.app.net.PinnedUpstream
+import com.homerelay.app.net.P2pInterfaceResolver
 import com.homerelay.app.net.UpstreamSelector
 import com.homerelay.app.p2p.P2pRuntime
 import com.homerelay.app.state.AppState
@@ -283,24 +285,52 @@ class Diagnostics(private val context: Context) {
     private fun checkGroupInterface(): CheckResult {
         val s = AppState.state.value
         val iface = s.groupInterfaceName
+        if (iface == null) {
+            return CheckResult(
+                id = "group_interface",
+                label = "P2P interface (discovered)",
+                status = CheckStatus.INFO,
+                detail = "Not sharing right now — the interface is discovered from requestGroupInfo() each session, never assumed.",
+            )
+        }
+        val live = P2pInterfaceResolver.resolve(iface)
+        val liveDetail = when (live) {
+            is InterfaceResolution.Found -> "Live enumeration: ${live.addresses.joinToString(", ")} → using ${live.ipv4}."
+            is InterfaceResolution.InterfaceNotFound -> "WARNING: interface '$iface' no longer exists (visible: ${live.visibleInterfaces.joinToString(", ").ifEmpty { "none" }})."
+            is InterfaceResolution.NoUsableAddress -> "WARNING: interface '$iface' has no usable IPv4 right now: ${live.addresses.joinToString(", ").ifEmpty { "none" }}."
+            is InterfaceResolution.NoInterfaceReported -> "WARNING: no interface name available."
+        }
         return CheckResult(
             id = "group_interface",
             label = "P2P interface (discovered)",
-            status = if (iface != null) CheckStatus.PASS else CheckStatus.INFO,
-            detail = iface?.let {
-                "Group reported interface '$it' (frequency ${s.groupFrequencyMhz?.let { f -> "$f MHz" } ?: "unknown"}, security ${s.groupSecurityType ?: "unknown"}). The proxy binds to this interface's IPv4 only — never 192.168.49.1 by assumption."
-            } ?: "Not sharing right now — the interface is discovered from requestGroupInfo() each session, never assumed.",
+            status = if (live is InterfaceResolution.Found) CheckStatus.PASS else CheckStatus.WARN,
+            detail = "Group reported interface '$iface' (frequency ${s.groupFrequencyMhz?.let { f -> "$f MHz" } ?: "unknown"}, security ${s.groupSecurityType ?: "unknown"}). $liveDetail The proxy binds to this interface's IPv4 only — never 192.168.49.1 by assumption and never WifiP2pInfo.groupOwnerAddress (anonymised for Group Owners).",
         )
     }
 
     private fun checkGroupIp(): CheckResult {
         val s = AppState.state.value
+        val host = s.bindAddress
+        if (host == null) {
+            return CheckResult(
+                id = "group_ip",
+                label = "P2P group IPv4 address (discovered)",
+                status = CheckStatus.INFO,
+                detail = "Not sharing right now.",
+            )
+        }
+        val live = P2pInterfaceResolver.resolve(s.groupInterfaceName)
+        val matches = live is InterfaceResolution.Found && live.ipv4 == host
         return CheckResult(
             id = "group_ip",
-            label = "P2P group IPv4 address",
-            status = if (s.bindAddress != null) CheckStatus.PASS else CheckStatus.INFO,
-            detail = s.bindAddress?.let { "Group owner address (requestConnectionInfo): $it — the proxy is bound here." }
-                ?: "Not sharing right now.",
+            label = "P2P group IPv4 address (discovered)",
+            status = when {
+                matches -> CheckStatus.PASS
+                live is InterfaceResolution.Found -> CheckStatus.WARN
+                else -> CheckStatus.WARN
+            },
+            detail = "Proxy bound to $host — resolved by enumerating the group interface (${s.groupInterfaceName ?: "unknown"}), NOT from WifiP2pInfo.groupOwnerAddress (anonymised for this device as Group Owner)." +
+                (if (live is InterfaceResolution.Found) " Re-check now: ${live.ipv4}." else " Interface no longer resolves to a usable IPv4 — the group may be gone; check group_created."),
         )
     }
 

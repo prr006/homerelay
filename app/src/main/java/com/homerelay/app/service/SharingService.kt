@@ -19,7 +19,9 @@ import androidx.core.app.ServiceCompat
 import com.homerelay.app.MainActivity
 import com.homerelay.app.R
 import com.homerelay.app.data.SettingsStore
+import com.homerelay.app.net.InterfaceResolution
 import com.homerelay.app.net.PinnedUpstream
+import com.homerelay.app.net.P2pInterfaceResolver
 import com.homerelay.app.net.UpstreamConnector
 import com.homerelay.app.net.UpstreamSelector
 import com.homerelay.app.p2p.P2pGroupController
@@ -225,15 +227,45 @@ class SharingService : Service() {
             return
         }
 
-        // 3. Bind address — the group's own IPv4, discovered via requestConnectionInfo().
-        val bindAddress = active.groupOwnerAddress
-        if (bindAddress == null) {
-            fail(
-                "The group formed but Android did not report its owner address (requestConnectionInfo). " +
-                    "Refusing to bind the proxy to all interfaces.",
-                sessionId,
-            )
-            return
+        // 3. Bind address — the group's REAL local IPv4, discovered from the interface the
+        //    framework reported (WifiP2pGroup.getInterface() → NetworkInterface.getByName →
+        //    usable IPv4). Android anonymises WifiP2pInfo.groupOwnerAddress for Group Owners
+        //    (0.0.0.0 without the privileged LOCAL_MAC_ADDRESS permission, which HomeRelay
+        //    never uses), so it is NOT a valid bind source. IPv4 assignment lags group
+        //    formation on some firmwares, so we retry with a bounded timeout.
+        val resolution = P2pInterfaceResolver.await(active.interfaceName, timeoutMs = 10_000, pollMs = 250)
+        val bindAddress = when (resolution) {
+            is InterfaceResolution.Found -> resolution.ipv4
+            is InterfaceResolution.NoInterfaceReported -> {
+                fail(
+                    "The group formed but Android did not report its interface name " +
+                        "(requestGroupInfo → getInterface()). ${resolution.detail} " +
+                        "Refusing to bind the proxy to all interfaces.",
+                    sessionId,
+                )
+                return
+            }
+            is InterfaceResolution.InterfaceNotFound -> {
+                fail(
+                    "The group reported interface '${resolution.interfaceName}' but NetworkInterface.getByName " +
+                        "returned null. Visible IPv4 interfaces right now: " +
+                        resolution.visibleInterfaces.joinToString(", ").ifEmpty { "none" } + ". " +
+                        "Refusing to bind the proxy to all interfaces.",
+                    sessionId,
+                )
+                return
+            }
+            is InterfaceResolution.NoUsableAddress -> {
+                fail(
+                    "Interface '${resolution.interfaceName}' has no usable IPv4 — discovered: " +
+                        resolution.addresses.joinToString(", ").ifEmpty { "none" } +
+                        " (loopback, wildcard, multicast, link-local and non-IPv4 are ignored). " +
+                        "This can mean the group formed but the kernel has not assigned it an address yet, " +
+                        "or the firmware does not support legacy clients. See Diagnostics.",
+                    sessionId,
+                )
+                return
+            }
         }
         AppState.update {
             it.copy(
@@ -271,6 +303,19 @@ class SharingService : Service() {
         if (!session.isCurrent(sessionId)) {
             // User pressed Stop while we were binding: tear the fresh proxy down and leave.
             runCatching { server.stop() }
+            return
+        }
+        // Confirm the group is still formed right now — the bind path must never advertise
+        // a proxy on top of a vanished group. On failure: stop the fresh proxy, remove the
+        // group, surface a precise error. No phantom group, no stale "Active" UI.
+        if (!p2p.verifyGroupFormed(3_000)) {
+            runCatching { server.stop() }
+            fail(
+                "The Wi-Fi Direct group disappeared while the proxy was binding " +
+                    "(requestGroupInfo returned no group, or the framework no longer reports a formed GO group). " +
+                    "Nothing is listening. Press Start sharing again.",
+                sessionId,
+            )
             return
         }
         proxy = server
@@ -409,7 +454,7 @@ class SharingService : Service() {
         if (sessionId != null && !session.isCurrent(sessionId)) return // stale session; a newer one is running
         tickJob?.cancel()
         tickJob = null
-        AppState.update { it.copy(phase = SharingPhase.Failed, errorMessage = message) }
+        AppState.update { it.copy(phase = SharingPhase.Failed, errorMessage = message, clientsConnected = 0, pacUrl = null) }
         proxy?.let { runCatching { it.stop() } }
         proxy = null
         p2p.stop()

@@ -16,6 +16,9 @@ import com.homerelay.app.util.SharingPermissions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /**
  * What the Wi-Fi Direct group reports.
@@ -37,8 +40,6 @@ sealed interface P2pGroupState {
         val interfaceName: String?,
         val frequencyMhz: Int?,
         val securityType: String?,
-        /** Address of the Group Owner as reported by requestConnectionInfo(); null if unknown. */
-        val groupOwnerAddress: String?,
         val isGroupOwner: Boolean,
         /** Devices currently in the group (from requestGroupInfo), excluding the owner. */
         val clientCount: Int,
@@ -56,8 +57,10 @@ sealed interface P2pGroupState {
  *  - Every failure path leaves the controller clean and retryable with a human-readable reason.
  *  - Group credentials are generated fresh per session (DIRECT-xxxxxx / 16-char WPA2),
  *    never persisted, never reused.
- *  - Client membership and the group's real interface/IPv4 are read back from the system
- *    via requestGroupInfo()/requestConnectionInfo(); no address is ever hardcoded.
+ *  - Client membership and the group's interface name are read back from the system via
+ *    requestGroupInfo()/requestConnectionInfo(). The LOCAL bind address is resolved from the
+ *    interface itself (see P2pInterfaceResolver) because WifiP2pInfo.groupOwnerAddress is
+ *    anonymised for Group Owners; nothing is ever hardcoded.
  *
  * Permissions: the system enforces the same Wi-Fi Direct permission matrix as before
  * (location on ≤ 12, NEARBY_WIFI_DEVICES on 13+); no privileged permissions are used.
@@ -248,26 +251,58 @@ class P2pGroupController(private val context: Context) {
                 return@requestGroupInfo
             }
             mgr.requestConnectionInfo(ch) { info ->
-                val ownerAddress = runCatching {
-                    info?.groupOwnerAddress?.hostAddress?.takeIf { it != "0.0.0.0" }
-                }.getOrNull()
+                // requestConnectionInfo() is kept for verifying the group is formed and this
+                // device is its owner. Its groupOwnerAddress field is ANONYMISED for Group
+                // Owners (0.0.0.0 without the privileged LOCAL_MAC_ADDRESS permission) and is
+                // therefore never used as a local bind address — see verifyGroupFormed() and
+                // P2pInterfaceResolver for the address source.
+                val formed = info?.groupFormed
                 synchronized(lock) {
                     if (gen != generation) return@requestConnectionInfo
                     if (_state.value is P2pGroupState.Failed) return@requestConnectionInfo
+                    val ownerFlag = runCatching { group.isGroupOwner() }.getOrDefault(false) && (formed != false)
                     _state.value = P2pGroupState.Active(
                         networkName = runCatching { group.getNetworkName() }.getOrNull()?.takeIf { it.isNotBlank() },
                         passphrase = runCatching { group.getPassphrase() }.getOrNull()?.takeIf { it.isNotBlank() },
                         interfaceName = runCatching { group.getInterface() }.getOrNull()?.takeIf { it.isNotBlank() },
                         frequencyMhz = runCatching { group.getFrequency() }.getOrNull()?.takeIf { it > 0 },
                         securityType = securityTypeName(runCatching { group.getSecurityType() }.getOrDefault(WifiP2pGroup.SECURITY_TYPE_UNKNOWN)),
-                        groupOwnerAddress = ownerAddress,
-                        isGroupOwner = runCatching { group.isGroupOwner() }.getOrDefault(false),
+                        isGroupOwner = ownerFlag,
                         clientCount = runCatching { group.getClientList()?.size }.getOrNull() ?: 0,
                     )
                 }
             }
         }
     }
+
+    /**
+     * Point-in-time check that the group still exists, this device is its owner, and
+     * requestConnectionInfo() agrees the group is formed. Used right before the proxy binds
+     * so we never bind on top of a vanished group. Returns false on any doubt or timeout.
+     */
+    suspend fun verifyGroupFormed(timeoutMs: Long = 3000): Boolean =
+        withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { cont ->
+                val mgr = wifiP2pManager
+                val ch = synchronized(lock) { channel }
+                if (mgr == null || ch == null) {
+                    cont.resume(false)
+                    return@suspendCancellableCoroutine
+                }
+                mgr.requestGroupInfo(ch) { group ->
+                    if (group == null) {
+                        if (cont.isActive) cont.resume(false)
+                        return@requestGroupInfo
+                    }
+                    mgr.requestConnectionInfo(ch) { info ->
+                        val formed = info?.groupFormed ?: true // tolerate missing info; group presence is authoritative
+                        val owner = runCatching { group.isGroupOwner() }.getOrDefault(false)
+                        val stillOwner = info?.isGroupOwner ?: owner
+                        if (cont.isActive) cont.resume(owner && formed && stillOwner)
+                    }
+                }
+            }
+        } ?: false
 
     /** Release the receiver. Called by the service in onDestroy. */
     fun dispose() {

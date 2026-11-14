@@ -13,7 +13,7 @@ HomeRelay is a small, honest Android app. Version 1.2.0 creates a **Wi‑Fi Dire
 - Connects the phone to your home Wi‑Fi (you do that as usual) and **shares that connection**, not mobile data.
 - **Pins the home Wi‑Fi network before anything else happens** and keeps that exact `Network` object for all upstream proxy traffic and DNS (`Network.socketFactory` / `Network.getAllByName`). If home Wi‑Fi disappears, proxied requests fail instead of silently using mobile data or looping back into the group.
 - Creates a **Wi‑Fi Direct group** via `WifiP2pManager.createGroup` with this device as Group Owner. Legacy clients (your M36) join it as a normal WPA2 Wi‑Fi network — no Wi‑Fi Direct support needed on the client. Group name and password are generated fresh per session by HomeRelay (`DIRECT-xxxxxx`, WPA2-Personal, 16-char password).
-- Discovers the **real** P2P interface and IPv4 via `requestGroupInfo()` / `requestConnectionInfo()` — never a hardcoded `192.168.49.1`.
+- Discovers the **real** P2P interface and IPv4 via `requestGroupInfo()` + interface enumeration — never a hardcoded `192.168.49.1`, and never `WifiP2pInfo.groupOwnerAddress` (anonymised for Group Owners).
 - Runs an on-device **HTTP proxy with HTTPS CONNECT tunneling** bound **only to the group's interface address** (never to all interfaces, never to the upstream Wi‑Fi).
 - Shows a dashboard: upstream Wi‑Fi (SSID, validated internet, metered), the group (SSID/passphrase, interface, frequency, security, connected clients), proxy (bind address/port, PAC URL), live byte/request counters, uptime, clients seen (last 10 minutes), active connections.
 - Serves a tiny status page and an optional **PAC** (`/proxy.pac`) file on the group address; QR code on the client-guide screen encodes the PAC URL.
@@ -106,7 +106,7 @@ docs: README.md, BUILDING.md, NETWORK_ARCHITECTURE.md, TROUBLESHOOTING.md, PRIVA
 - Wi‑Fi Direct group creation via official API; per-session `DIRECT-xxxxxx` credentials shown live; legacy clients join as plain WPA2 Wi‑Fi.
 - Real P2P interface / IPv4 discovery; proxy bound to that interface only (fails closed otherwise).
 - Upstream-loss detection during a session (dedicated `NetworkCallback`) with an explicit "Upstream unavailable" state; automatic resume when Wi‑Fi returns; never a cellular fallback.
-- Group-loss detection (framework broadcast + per-second read-back): the UI never keeps showing "Sharing" after the group disappears — it fails closed.
+- Group-loss detection (framework broadcast + per-second read-back): the UI never keeps showing "Sharing" after the group disappears — it fails closed. Immediately before the proxy is advertised, group formation is re-verified; a vanished group tears the bind down.
 - Live session counters: bytes up/down, request counts, CONNECT tunnels, active connections, clients in group, clients seen (10-min window), uptime.
 - Persistent foreground notification with live status and a Stop action; partial wake lock with 8 h cap.
 - Client Guide screen: per-OS proxy setup, PAC URL, QR of the PAC URL, copy buttons.

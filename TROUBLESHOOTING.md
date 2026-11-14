@@ -4,6 +4,41 @@ Real fixes for the failures a HomeRelay user can actually hit. Ordered roughly b
 If something here is wrong or incomplete, open an issue with your device model, Android/One UI
 build, and the exact error text from the app — not guesses.
 
+## v1.2.0 defect fixed in v1.2.1 — proxy socket fails / Checks fail locally
+
+v1.2.0 used `WifiP2pInfo.groupOwnerAddress` as the proxy bind address. Android anonymises
+that field for Group Owner apps (0.0.0.0) unless they hold the privileged
+`LOCAL_MAC_ADDRESS` permission — so the proxy never bound and the local socket/HTTP checks
+failed. v1.2.1 instead discovers the address by enumerating the P2P interface reported by
+`getInterface()`. If you are on v1.2.0, upgrade.
+
+## If the proxy works locally but the M36 still cannot see or join the group
+
+The v1.2.1 fix restores the *local* path (proxy bound to the real group IPv4). It does **not**
+prove the M36 discovery path — that is a separate question to investigate, in this order:
+
+1. **Band.** HomeRelay creates the group on 2.4 GHz (`GROUP_OWNER_BAND_2GHZ`). Check Checks →
+   "P2P interface" → frequency — if it reports 5 GHz, some legacy clients on crowded bands
+   won't offer the network. There is no user-facing band switch yet; report the reading.
+2. **SSID shape.** The group MUST advertise a `DIRECT-`-prefixed SSID — that is what tells
+   legacy (non-P2P) Wi‑Fi clients "this is a joinable P2P group". HomeRelay generates
+   `DIRECT-xxxxxx`; verify on the dashboard. If the SSID were ever anything else, the M36
+   would never list it — report it.
+3. **Hidden/open ambiguity.** HomeRelay never hides the SSID and never creates an open group;
+   WPA2-Personal only. If the M36 can't find it even by manual "add network", that points at
+   beaconing, not proxying.
+4. **Capture evidence:**
+   - `adb shell dumpsys wifip2p` on the M01 (group formed? interface? frequency? clients?)
+   - `adb shell ip link` — is the p2p interface UP with an IPv4?
+   - `adb logcat -s p2p,wpa_supplicant` while the M36 tries to join
+   - Checks → "P2P interface (discovered)" and "Group IPv4" screenshots
+5. **Samsung firmware quirks** (One UI 4.1): conflicting P2P consumers (Nearby Share, Smart
+   View, system hotspot) can starve group beaconing; toggle Wi‑Fi off/on and retry with all
+   other connectivity features off.
+6. If it STILL fails after the above, this is a firmware/driver-level limitation of the M01 —
+   the honest answer may be "cannot host a joinable legacy-client group", and the diagnostics
+   above are exactly the evidence needed to say so definitively.
+
 ## Group won't start / "The Wi‑Fi Direct group did not form within 20 seconds"
 
 1. Toggle Wi‑Fi off and on once, then press **Start sharing** again.

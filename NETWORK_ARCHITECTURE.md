@@ -95,12 +95,23 @@ answer either way.
    (`WifiP2pManager.createGroup`). Fresh `DIRECT-xxxxxx` credentials are generated per session.
    Group state is read back from the framework via `requestGroupInfo()` (interface name,
    frequency, security type, passphrase, client list) and `requestConnectionInfo()`
-   (`groupFormed`, `isGroupOwner`, `groupOwnerAddress`) — **nothing is hardcoded**, and
-   `192.168.49.1` is never assumed.
+   (`groupFormed`, `isGroupOwner`). **`WifiP2pInfo.groupOwnerAddress` is NOT used**: Android
+   anonymises it to 0.0.0.0 for the calling app whenever it is the Group Owner, unless it
+   holds the privileged `LOCAL_MAC_ADDRESS` permission — which HomeRelay never requests.
+   Instead, the local IPv4 is discovered by enumerating the interface reported by
+   `requestGroupInfo().getInterface()` (`NetworkInterface.getByName`), ignoring loopback,
+   wildcard, multicast, link-local and non-IPv4 addresses, preferring site-local. IPv4
+   assignment is awaited with a bounded retry (10 s, 250 ms polls); if nothing usable
+   appears, the session fails with the interface name and every discovered address in the
+   error. **Nothing is hardcoded**, and `192.168.49.1` is never assumed.
 3. **The pinned network is re-validated** after group formation (see the caveat above). If it
    did not survive, the session fails and the group is removed.
-4. HomeRelay binds the proxy to **the group's IPv4 address only**. If it cannot be discovered,
-   binding **fails closed** — the proxy never falls back to 0.0.0.0.
+4. **The group's local IPv4 is discovered from its interface** (see above), with a bounded
+   wait for IPv4 assignment. HomeRelay then binds the proxy to **that address only**. If it
+   cannot be resolved, binding **fails closed** — the proxy never falls back to 0.0.0.0, and
+   the error names the interface and every discovered address. Immediately before the proxy
+   is advertised, the group is re-checked (`verifyGroupFormed`): if it disappeared while
+   binding, the fresh proxy is torn down, the group is removed, and the UI fails closed.
 5. The proxy (`proxy/ProxyServer.java`) speaks:
    - **HTTP forwarding** to absolute-URI requests,
    - **CONNECT tunneling** with raw byte relay — used for HTTPS; bytes are never parsed or decrypted,
@@ -118,10 +129,14 @@ answer either way.
    If the group disappears (system removes it, Wi‑Fi toggles, a conflicting P2P app runs),
    the reader sees `null` and the session fails closed — **the UI never keeps showing
    “sharing” without a group**.
-8. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
+8. **v1.2.1 correction.** v1.2.0 bound the proxy to `WifiP2pInfo.groupOwnerAddress`, which
+   Android anonymises for Group Owners — the proxy failed to bind and the local proxy/HTTP
+   checks failed even though the group itself was up. v1.2.1 resolves the address from the
+   P2P interface as described above.
+9. Counters (`ProxyStats`) measure bytes actually relayed up/down, request counts, CONNECT
    tunnel counts, active connections, and distinct client IPs seen in a rolling 10-minute
    window. All of it is in-memory, reset per session.
-9. **Stop sharing** — from the app or the notification — stops the proxy, removes the P2P
+10. **Stop sharing** — from the app or the notification — stops the proxy, removes the P2P
    group (`removeGroup`), unregisters the pinned-network callback, releases the wake lock, and
    the service stops itself. Start/Stop cycles are race-safe via a generation token
    (`SessionGuard`): a stale callback can never tear down a newer session.
