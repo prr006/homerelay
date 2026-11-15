@@ -617,7 +617,7 @@ class SharingService : Service() {
             @Suppress("DEPRECATION") // WIFI_MODE_FULL_HIGH_PERF is deprecated but still honoured on API 36
             wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "homerelay:sharing")?.apply {
                 setReferenceCounted(false)
-                acquire(WAKE_LOCK_TIMEOUT_MS) // hard cap; released on stop
+                acquire() // released on stop; WifiLock has no timeout overload
             }
         }.getOrNull()
         if (acquired == null) {
