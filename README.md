@@ -109,6 +109,7 @@ docs: README.md, BUILDING.md, NETWORK_ARCHITECTURE.md, TROUBLESHOOTING.md, PRIVA
 - Group-loss detection (framework broadcast + per-second read-back): the UI never keeps showing "Sharing" after the group disappears — it fails closed. Immediately before the proxy is advertised, group formation is re-verified; a vanished group tears the bind down.
 - Plain-HTTP diagnostic speaks to the local proxy over a raw socket in absolute-form (no cleartext opt-out needed, API 36 safe); HTTPS diagnostic unchanged; requires exactly HTTP 204 (proxy 502/503/504 are failures).
 - Selectable Wi‑Fi Direct group creation mode (A: custom 2.4 GHz · B: system-managed · C: custom credentials + default band) to debug Samsung GO interoperability.
+- Screen-off hosting: partial wake lock + high-performance Wi-Fi lock held for the whole session; Diagnostics (`resource_locks`) shows them live.
 - Live session counters: bytes up/down, request counts, CONNECT tunnels, active connections, clients in group, clients seen (10-min window), uptime.
 - Persistent foreground notification with live status and a Stop action; partial wake lock with 8 h cap.
 - Client Guide screen: per-OS proxy setup, PAC URL, QR of the PAC URL, copy buttons.

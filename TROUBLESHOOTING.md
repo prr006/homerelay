@@ -4,6 +4,24 @@ Real fixes for the failures a HomeRelay user can actually hit. Ordered roughly b
 If something here is wrong or incomplete, open an issue with your device model, Android/One UI
 build, and the exact error text from the app — not guesses.
 
+## Sharing drops when the M01 screen locks (v1.2.5)
+
+Stock Android puts Wi‑Fi into power save and can suspend the CPU with the screen off — either
+kills the group/relay. v1.2.5 holds a partial wake lock AND a high-performance Wi-Fi lock for
+the whole session. Checks → `resource_locks` shows what is actually held right now.
+
+If the group still drops with the screen off:
+
+1. Checks → `resource_locks` — PASS (both held) or WARN (Wi-Fi lock refused)?
+2. Exempt HomeRelay from battery optimization (Settings → battery dialog) AND remove it from
+   One UI “Sleeping apps” / “Deep sleeping apps”; add to “Never sleeping apps”.
+3. Disable “Adaptive battery” for HomeRelay if present; keep the screen off only AFTER the
+   M36 is connected and browsing.
+4. Record how long until the drop and Checks output after wake (`group_created`,
+   `upstream_survived`, `resource_locks`) — those distinguish radio-sleep vs service-kill vs
+   group-loss.
+5. 30–60 minute screen-off sessions have NOT been validated by the developers; report yours.
+
 ## M01 hosts, M36 cannot see the network (v1.2.4 A/B experiment)
 
 Evidence: M36-hosted HomeRelay works (M01 discovers, joins, plays). M01-hosted HomeRelay is

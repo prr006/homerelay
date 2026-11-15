@@ -151,6 +151,29 @@ answer either way.
    the service stops itself. Start/Stop cycles are race-safe via a generation token
    (`SessionGuard`): a stale callback can never tear down a newer session.
 
+## Screen-off hosting (v1.2.5)
+
+With the host screen off, stock Android puts the radio into power save and Doze can suspend
+the CPU — either kills a legacy Wi‑Fi Direct group and the relay with it. HomeRelay now holds,
+for exactly the duration of a sharing session:
+
+- a **PARTIAL_WAKE_LOCK** (`homerelay:sharing`, reference-counted off, 8 h hard cap) — the
+  proxy threads and the 1-second refresh/tick loop keep running;
+- a **WIFI_MODE_FULL_HIGH_PERF `WifiLock`** (`homerelay:sharing`, reference-counted off, same
+  8 h cap) — the Wi-Fi radio is kept out of power save, which is what keeps the group
+  beaconing and the upstream STA associated after lock.
+
+Both are acquired when the session starts (before pinning/creation), released on every exit
+path (fail, stop, service destroy) via a shared `ResourceGuard`, and shown live in Diagnostics
+(`resource_locks`): PASS requires both, WARN flags a missing Wi-Fi lock or a leak while idle.
+An unavailable Wi-Fi lock is non-fatal — sharing continues on the wake lock and Diagnostics
+says so, instead of failing silently.
+
+Not covered: Samsung One UI may still kill the foreground service for battery reasons; the
+A/B remedy is the battery-optimization exemption (Settings → battery dialog; user-approved).
+Screen-off reliability for 30–60 min MUST be validated on the physical M01/M36 — no claim is
+made otherwise.
+
 ## Group creation modes (v1.2.4 A/B experiment)
 
 Settings selects how the GO group is configured, per session (switching stops the previous

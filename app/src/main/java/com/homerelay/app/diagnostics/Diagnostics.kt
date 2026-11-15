@@ -14,6 +14,7 @@ import com.homerelay.app.net.UpstreamSelector
 import com.homerelay.app.p2p.P2pRuntime
 import com.homerelay.app.state.AppState
 import com.homerelay.app.state.SharingPhase
+import com.homerelay.app.util.HostResources
 import com.homerelay.app.util.ProxyHttpProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -69,6 +70,7 @@ class Diagnostics(private val context: Context) {
             checkProxyListening(),
             checkPlainHttpViaProxy(),
             checkHttpsViaProxy(),
+            checkResourceLocks(),
         )
     }
 
@@ -612,6 +614,47 @@ class Diagnostics(private val context: Context) {
                 }
             }
         } ?: CheckResult(id, label, CheckStatus.FAIL, "Timed out through the proxy.")
+    }
+
+    /**
+     * Host-awake proof for screen-off sharing: which resources this session holds right now
+     * (partial wake lock, high-perf Wi-Fi lock). PASS while sharing only when both are held;
+     * WARN when the Wi-Fi lock could not be taken (radio may power-save with the screen off).
+     */
+    private fun checkResourceLocks(): CheckResult {
+        val s = AppState.state.value
+        val wake = HostResources.guard.isHeld(HostResources.WAKE_LOCK)
+        val wifi = HostResources.guard.isHeld(HostResources.WIFI_LOCK)
+        val held = HostResources.heldSummary()
+        if (!s.sharing) {
+            return CheckResult(
+                id = "resource_locks",
+                label = "Host wake & Wi-Fi locks",
+                status = if (held == "none") CheckStatus.INFO else CheckStatus.WARN,
+                detail = if (held == "none") "Not sharing — nothing held."
+                else "Not sharing but resources are still registered as held ($held) — this indicates a leak; press Start then Stop, or reopen the app.",
+            )
+        }
+        return when {
+            wake && wifi -> CheckResult(
+                id = "resource_locks",
+                label = "Host wake & Wi-Fi locks",
+                status = CheckStatus.PASS,
+                detail = "Partial wake lock + high-performance Wi-Fi lock held ($held). The proxy and group keep running with the screen off.",
+            )
+            wake && !wifi -> CheckResult(
+                id = "resource_locks",
+                label = "Host wake & Wi-Fi locks",
+                status = CheckStatus.WARN,
+                detail = "Partial wake lock held ($held) but the Wi-Fi high-perf lock could not be taken — the radio may enter power save with the screen off, which is the usual cause of groups dropping a few minutes after lock. Check battery optimization exemption.",
+            )
+            else -> CheckResult(
+                id = "resource_locks",
+                label = "Host wake & Wi-Fi locks",
+                status = CheckStatus.WARN,
+                detail = "CPU wake lock is NOT held ($held) — Doze may suspend the relay with the screen off.",
+            )
+        }
     }
 
     private fun describe(e: Throwable): String {

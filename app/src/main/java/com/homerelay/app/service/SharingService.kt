@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.net.wifi.WifiManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.homerelay.app.MainActivity
@@ -30,6 +31,7 @@ import com.homerelay.app.util.GroupCreationMode
 import com.homerelay.app.proxy.ProxyServer
 import com.homerelay.app.state.AppState
 import com.homerelay.app.state.SharingPhase
+import com.homerelay.app.util.HostResources
 import com.homerelay.app.util.SessionGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +63,7 @@ class SharingService : Service() {
     private var proxy: ProxyServer? = null
     private var tickJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private var upstreamCallback: ConnectivityManager.NetworkCallback? = null
     private var pinnedNetwork: Network? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -103,6 +106,10 @@ class SharingService : Service() {
     private fun startSharing() {
         val current = AppState.state.value
         if (current.phase == SharingPhase.Sharing || current.phase == SharingPhase.UpstreamUnavailable || current.busy) return
+
+        // Keep the host awake for the whole session — including the Starting phase —
+        // so the screen may turn off at any time without the relay dropping.
+        acquireResourceLocks()
 
         // Never ask the system for a group we are not allowed to have — fail fast with a clear message.
         if (!com.homerelay.app.util.SharingPermissions.hasHotspotPermission(this)) {
@@ -351,7 +358,6 @@ class SharingService : Service() {
                 seenDevices = 0, activeConnections = 0,
             )
         }
-        acquireWakeLock()
         updateNotification(getString(R.string.notification_title),
             "Group active — waiting for a client · proxy $bindAddress:$boundPort")
         startTickLoop(server, boundPort, sessionId)
@@ -464,7 +470,7 @@ class SharingService : Service() {
         proxy?.let { runCatching { it.stop() } }
         proxy = null
         p2p.stop()
-        releaseWakeLock()
+        releaseResourceLocks()
         unregisterPinnedNetworkCallback()
         pinnedNetwork = null
         PinnedUpstream.network = null
@@ -489,7 +495,7 @@ class SharingService : Service() {
         }
         proxy = null
         p2p.stop()
-        releaseWakeLock()
+        releaseResourceLocks()
         unregisterPinnedNetworkCallback()
         pinnedNetwork = null
         PinnedUpstream.network = null
@@ -505,7 +511,7 @@ class SharingService : Service() {
         proxy?.let { runCatching { it.stop() } }
         proxy = null
         p2p.stop()
-        releaseWakeLock()
+        releaseResourceLocks()
         unregisterPinnedNetworkCallback()
         pinnedNetwork = null
         PinnedUpstream.network = null
@@ -571,23 +577,72 @@ class SharingService : Service() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
-    /* ---------------- wakelock ---------------- */
+    /* ---------------- wake / Wi-Fi locks ---------------- */
+
+    /**
+     * Acquire the locks that keep the relay alive with the screen off:
+     *  - a PARTIAL_WAKE_LOCK (CPU stays available for the proxy threads and the 1 s tick loop);
+     *  - a WIFI_MODE_FULL_HIGH_PERF WifiLock, which stops the Wi-Fi radio entering power
+     *    save (the reason groups typically drop a few minutes after lock).
+     * Both are reference-count-free, hard-capped at 8 h, released on every exit path.
+     * If the Wi-Fi lock cannot be taken (firmware refused), sharing continues with the
+     * wake lock and Diagnostics reports the WARN — never a silent downgrade.
+     */
+    private fun acquireResourceLocks() {
+        acquireWakeLock()
+        acquireWifiLock()
+    }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+        if (!HostResources.guard.acquire(HostResources.WAKE_LOCK)) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "homerelay:sharing").apply {
-            setReferenceCounted(false)
-            acquire(8 * 60 * 60 * 1000L) // 8h hard cap; released on stop
+        val acquired = runCatching {
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "homerelay:sharing").apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS) // hard cap; released on stop
+            }
+        }.getOrNull()
+        if (acquired == null) {
+            HostResources.guard.release(HostResources.WAKE_LOCK)
+            wakeLock = null
+        } else {
+            wakeLock = acquired
         }
     }
 
-    private fun releaseWakeLock() {
-        try {
-            if (wakeLock?.isHeld == true) wakeLock?.release()
-        } catch (_: Exception) {
+    private fun acquireWifiLock() {
+        if (!HostResources.guard.acquire(HostResources.WIFI_LOCK)) return
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val acquired = runCatching {
+            @Suppress("DEPRECATION") // WIFI_MODE_FULL_HIGH_PERF is deprecated but still honoured on API 36
+            wm?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "homerelay:sharing")?.apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS) // hard cap; released on stop
+            }
+        }.getOrNull()
+        if (acquired == null) {
+            HostResources.guard.release(HostResources.WIFI_LOCK)
+            wifiLock = null
+        } else {
+            wifiLock = acquired
+        }
+    }
+
+    private fun releaseResourceLocks() {
+        if (HostResources.guard.release(HostResources.WAKE_LOCK)) {
+            try {
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+            } catch (_: Exception) {
+            }
         }
         wakeLock = null
+        if (HostResources.guard.release(HostResources.WIFI_LOCK)) {
+            try {
+                if (wifiLock?.isHeld == true) wifiLock?.release()
+            } catch (_: Exception) {
+            }
+        }
+        wifiLock = null
     }
 
     /* ---------------- helpers ---------------- */
@@ -595,6 +650,7 @@ class SharingService : Service() {
     companion object {
         const val ACTION_START = "com.homerelay.app.action.START"
         const val ACTION_STOP = "com.homerelay.app.action.STOP"
+        private const val WAKE_LOCK_TIMEOUT_MS = 8L * 60 * 60 * 1000L // 8 h hard cap
         private const val CHANNEL_ID = "home_relay_sharing"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "HomeRelay"

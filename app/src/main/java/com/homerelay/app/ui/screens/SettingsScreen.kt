@@ -213,7 +213,7 @@ fun SettingsScreen(
 
         item {
             SectionCard(title = "About") {
-                InfoRow("Version", "1.2.4 (build 7)")
+                InfoRow("Version", "1.2.5 (build 8)")
                 InfoRow("Package", "com.homerelay.app")
                 InfoRow("License", "MIT")
                 InfoRow("Source", "github.com/prr006/homerelay")
